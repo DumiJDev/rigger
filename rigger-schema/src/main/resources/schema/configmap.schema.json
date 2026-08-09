@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigger.io/schema/v1/configmap",
+  "title": "Rigger ConfigMap",
+  "description": "Stores non-sensitive configuration as key/value pairs. Maps to Docker Config.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "rigger.io/v1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "ConfigMap"
+    },
+    "metadata": {
+      "$ref": "#/$defs/objectMeta"
+    },
+    "spec": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key/value configuration data. Values are plain text."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "objectMeta": {
+      "type": "object",
+      "required": [
+        "name",
+        "namespace"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9\\-]{0,61}[a-z0-9]$"
+        },
+        "namespace": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9\\-]{0,61}[a-z0-9]$"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

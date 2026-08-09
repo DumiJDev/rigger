@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigger.io/schema/v1/service",
+  "title": "Rigger Service",
+  "description": "Exposes a Deployment on an overlay network VIP or published port.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "rigger.io/v1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "Service"
+    },
+    "metadata": {
+      "$ref": "#/$defs/objectMeta"
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "selector",
+        "ports"
+      ],
+      "properties": {
+        "selector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Label selector to match target pods."
+        },
+        "ports": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "port",
+              "targetPort"
+            ],
+            "properties": {
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "targetPort": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "protocol": {
+                "type": "string",
+                "enum": [
+                  "TCP",
+                  "UDP"
+                ],
+                "default": "TCP"
+              }
+            }
+          }
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "ClusterIP",
+            "LoadBalancer"
+          ],
+          "default": "ClusterIP"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "objectMeta": {
+      "type": "object",
+      "required": [
+        "name",
+        "namespace"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9\\-]{0,61}[a-z0-9]$"
+        },
+        "namespace": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9\\-]{0,61}[a-z0-9]$"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

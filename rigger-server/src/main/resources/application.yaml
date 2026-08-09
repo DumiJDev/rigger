@@ -1,0 +1,87 @@
+# Rigger Server — default configuration
+# Override via environment variables or application-local.yaml
+
+server:
+  port: 7433
+  ssl:
+    enabled: true
+    key-store:          ${TLS_KEYSTORE_PATH:classpath:dev-keystore.p12}
+    key-store-password: ${TLS_KEYSTORE_PASSWORD:rigger-dev}
+    key-store-type:     PKCS12
+    client-auth:        want   # want = JWT + mTLS; need = mTLS only
+
+spring:
+  autoconfigure:
+    exclude:
+      # Rigger's own SecurityFilterChain + RiggerAuthenticationFilter fully replace
+      # username/password auth — suppress Spring Boot's default in-memory
+      # UserDetailsService (and its noisy generated-password log line).
+      - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  application:
+    name: rigger
+  jpa:
+    database-platform: org.hibernate.community.dialect.SQLiteDialect
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  datasource:
+    url:                  jdbc:sqlite:${rigger.store.path:./rigger-state.db}
+    driver-class-name:    org.sqlite.JDBC
+  flyway:
+    enabled:   true
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+
+rigger:
+  store:
+    type: sqlite
+    path: ${RIGGER_DB_PATH:./rigger-state.db}
+
+  security:
+    masterKey:          ${RIGGER_MASTER_KEY:}
+    jwtSigningKey:      ${RIGGER_JWT_KEY:changeme-replace-in-production-min-32-chars}
+    jwtExpiryMinutes:   15
+    bootstrapAdminName:     ${RIGGER_ADMIN_NAME:admin}
+    bootstrapAdminPassword: ${RIGGER_ADMIN_PASSWORD:admin}
+    caCertPath:         ${RIGGER_CA_CERT:}
+
+  docker:
+    # Linux:   unix:///var/run/docker.sock     (default)
+    # Windows: npipe:////./pipe/docker_engine  (Docker Desktop on Windows)
+    # Remote:  tcp://10.0.0.10:2375
+    socket: ${DOCKER_SOCKET:/var/run/docker.sock}
+    host:   ${DOCKER_HOST:}
+
+  operator:
+    reconcile-interval-seconds: ${RIGGER_RECONCILE_INTERVAL:15}
+    hpa-interval-seconds:       ${RIGGER_HPA_INTERVAL:30}
+    enabled:                    ${RIGGER_OPERATOR_ENABLED:true}
+
+  # Set this to true to connect to an EXISTING Swarm
+  # instead of using the provisioner to create one.
+  # Useful when Swarm was set up manually or already exists.
+  swarm:
+    attach-existing: ${RIGGER_ATTACH_EXISTING_SWARM:false}
+
+  gitops:
+    enabled:              ${RIGGER_GITOPS_ENABLED:false}
+    repository:           ${RIGGER_GITOPS_REPO:}
+    branch:               ${RIGGER_GITOPS_BRANCH:main}
+    sshKeyPath:           ${RIGGER_GITOPS_KEY:}
+    poll-interval-seconds: 60
+
+logging:
+  level:
+    io.rigger:                   INFO
+    org.springframework.security: WARN
+    com.github.dockerjava:       WARN

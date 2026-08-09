@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigger.io/schema/v1/cluster",
+  "title": "Rigger Cluster Manifest",
+  "description": "Schema for rigger.cluster.yaml. Enables IDE autocompletion and Rigger CLI validation.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "rigger.io/v1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "Cluster"
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9\\-]{0,61}[a-z0-9]$",
+          "description": "Cluster name. Lowercase alphanumeric with dashes."
+        },
+        "region": {
+          "type": "string",
+          "description": "Optional geographic region label."
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "defaults",
+        "nodes"
+      ],
+      "properties": {
+        "docker": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string",
+              "default": "26.1",
+              "examples": [
+                "26.1",
+                "27.0"
+              ]
+            },
+            "channel": {
+              "type": "string",
+              "enum": [
+                "stable",
+                "test",
+                "nightly"
+              ],
+              "default": "stable"
+            }
+          }
+        },
+        "defaults": {
+          "type": "object",
+          "required": [
+            "ssh"
+          ],
+          "properties": {
+            "ssh": {
+              "$ref": "#/$defs/sshCredentials"
+            }
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "ip",
+              "role"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9\\-]{0,61}[a-z0-9]$"
+              },
+              "ip": {
+                "type": "string",
+                "format": "ipv4"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "manager",
+                  "worker"
+                ]
+              },
+              "primary": {
+                "type": "boolean",
+                "default": false,
+                "description": "Exactly one node must be primary=true. Rigger runs swarm init here."
+              },
+              "autoProvision": {
+                "type": "boolean",
+                "default": false
+              },
+              "ssh": {
+                "$ref": "#/$defs/sshCredentials"
+              },
+              "labels": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "dev": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "dockerSocket": {
+              "type": "string",
+              "default": "/var/run/docker.sock"
+            }
+          }
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sshCredentials": {
+      "type": "object",
+      "required": [
+        "user",
+        "privateKeyPath"
+      ],
+      "properties": {
+        "user": {
+          "type": "string",
+          "description": "SSH username on the remote host."
+        },
+        "privateKeyPath": {
+          "type": "string",
+          "description": "Path to the Ed25519/RSA private key. Supports ~/"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 22
+        }
+      }
+    }
+  }
+}
