@@ -2,6 +2,7 @@ package io.rigger.api.controller;
 
 import io.rigger.api.dto.ErrorResponse;
 import io.rigger.core.exception.*;
+import io.rigger.core.util.UlidGenerator;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,8 +36,14 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> generic(Exception e, HttpServletRequest req) {
-        log.error("Unhandled exception", e);
+        // Unlike the handlers above (whose messages are intentional and safe to expose),
+        // an uncaught exception's message can leak internals (SQL, file paths, stack frames).
+        // Log the real detail server-side and hand the client only a correlation id to quote back.
+        String correlationId = UlidGenerator.generate();
+        log.error("Unhandled exception [correlationId={}]", correlationId, e);
         return ResponseEntity.status(500)
-            .body(ErrorResponse.of(500, "Internal Server Error", e.getMessage(), req.getRequestURI()));
+            .body(ErrorResponse.of(500, "Internal Server Error",
+                "An unexpected error occurred. Reference: " + correlationId,
+                req.getRequestURI(), correlationId));
     }
 }

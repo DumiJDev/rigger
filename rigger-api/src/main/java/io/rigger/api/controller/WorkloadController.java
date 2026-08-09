@@ -11,6 +11,7 @@ import io.rigger.events.model.*;
 import io.rigger.manifest.parser.*;
 import io.rigger.schema.ManifestSchemaValidator;
 import io.rigger.security.audit.AuditService;
+import io.rigger.security.crypto.SecretEncryptor;
 import io.rigger.security.rbac.*;
 import io.rigger.store.entity.ResourceEntity;
 import io.rigger.store.repository.ResourceRepository;
@@ -39,16 +40,19 @@ public class WorkloadController {
     private final AuditService         audit;
     private final RiggerEventBus       eventBus;
     private final ServiceAdapter       swarmAdapter;
+    private final SecretEncryptor      secretEncryptor;
     private final ObjectMapper         mapper = new ObjectMapper();
 
     public WorkloadController(ResourceRepository store, ManifestParser parser,
                                ManifestSchemaValidator schemaValidator,
                                RbacPolicyEngine rbac, AuditService audit,
-                               RiggerEventBus eventBus, ServiceAdapter swarmAdapter) {
+                               RiggerEventBus eventBus, ServiceAdapter swarmAdapter,
+                               SecretEncryptor secretEncryptor) {
         this.store = store; this.parser = parser;
         this.schemaValidator = schemaValidator;
         this.rbac = rbac; this.audit = audit;
         this.eventBus = eventBus; this.swarmAdapter = swarmAdapter;
+        this.secretEncryptor = secretEncryptor;
     }
 
     // ── Apply ──────────────────────────────────────────────────────────────
@@ -70,7 +74,12 @@ public class WorkloadController {
             rbac.authorize(ctx, "apply", manifest.kind());
             schemaValidator.validateOrThrow(manifest.kind(), req.manifest());
 
-            String specJson  = mapper.writeValueAsString(manifest.spec());
+            Object spec = manifest.spec();
+            if ("Secret".equals(manifest.kind()) && spec instanceof SecretSpec secretSpec) {
+                spec = encryptSecretData(secretSpec);
+            }
+
+            String specJson  = mapper.writeValueAsString(spec);
             String labelsJson = mapper.writeValueAsString(manifest.metadata().labels());
             boolean exists   = store.existsByKindAndNamespaceAndName(
                 manifest.kind(), namespace, manifest.metadata().name());
@@ -87,8 +96,10 @@ public class WorkloadController {
             var ref = new ResourceRef(ResourceKind.valueOf(manifest.kind().toUpperCase().replace("CONFIGMAP","CONFIG_MAP")),
                 namespace, manifest.metadata().name());
             eventBus.publish(new ResourceAppliedEvent(ref, ctx.identityName(), !exists));
+            String auditAfterState = req.dryRun() ? null
+                : "Secret".equals(manifest.kind()) ? "<redacted-secret-data>" : specJson;
             audit.recordSuccess(ctx, AuditAction.APPLY, manifest.kind(), manifest.metadata().name(),
-                exists ? "previous" : null, req.dryRun() ? null : specJson);
+                exists ? "previous" : null, auditAfterState);
 
             results.add(Map.of("kind", manifest.kind(), "name", manifest.metadata().name(),
                 "namespace", namespace, "action", exists ? "updated" : "created"));
@@ -212,6 +223,14 @@ public class WorkloadController {
 
     private List<ResourceResponse> toResponses(List<ResourceEntity> entities) {
         return entities.stream().map(this::toResponse).toList();
+    }
+
+    /** Encrypts every value in a Secret's data map. Never called on read paths. */
+    private SecretSpec encryptSecretData(SecretSpec spec) {
+        if (spec.data() == null || spec.data().isEmpty()) return spec;
+        var encrypted = new LinkedHashMap<String, String>();
+        spec.data().forEach((key, value) -> encrypted.put(key, secretEncryptor.encrypt(value)));
+        return new SecretSpec(encrypted, spec.vaultRef());
     }
 
     private ResourceResponse toResponse(ResourceEntity e) {

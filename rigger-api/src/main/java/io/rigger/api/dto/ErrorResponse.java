@@ -7,9 +7,14 @@ public record ErrorResponse(
         @JsonProperty("status")  int status,
         @JsonProperty("title")   String title,
         @JsonProperty("detail")  String detail,
-        @JsonProperty("instance")String instance
+        @JsonProperty("instance")String instance,
+        @JsonProperty("correlationId") String correlationId
 ) {
     public static ErrorResponse of(int status, String title, String detail, String path) {
-        return new ErrorResponse(status, title, detail, path);
+        return new ErrorResponse(status, title, detail, path, null);
+    }
+
+    public static ErrorResponse of(int status, String title, String detail, String path, String correlationId) {
+        return new ErrorResponse(status, title, detail, path, correlationId);
     }
 }

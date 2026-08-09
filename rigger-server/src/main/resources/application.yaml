@@ -52,7 +52,7 @@ rigger:
     jwtSigningKey:      ${RIGGER_JWT_KEY:changeme-replace-in-production-min-32-chars}
     jwtExpiryMinutes:   15
     bootstrapAdminName:     ${RIGGER_ADMIN_NAME:admin}
-    bootstrapAdminPassword: ${RIGGER_ADMIN_PASSWORD:admin}
+    bootstrapAdminPassword: ${RIGGER_ADMIN_PASSWORD:}
     caCertPath:         ${RIGGER_CA_CERT:}
 
   docker:

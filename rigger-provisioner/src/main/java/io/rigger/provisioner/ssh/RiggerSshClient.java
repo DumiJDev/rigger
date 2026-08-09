@@ -3,6 +3,8 @@ package io.rigger.provisioner.ssh;
 import io.rigger.core.domain.cluster.SshCredentials;
 import io.rigger.core.exception.ProvisioningException;
 import org.apache.sshd.client.SshClient;
+import org.apache.sshd.client.keyverifier.AcceptAllServerKeyVerifier;
+import org.apache.sshd.client.keyverifier.DefaultKnownHostsServerKeyVerifier;
 import org.apache.sshd.client.session.ClientSession;
 import org.apache.sshd.common.keyprovider.FileKeyPairProvider;
 import org.slf4j.Logger;
@@ -22,8 +24,10 @@ import java.util.concurrent.TimeUnit;
  * <p>Security: password authentication is disabled at the MINA client level.
  * All connections use Ed25519 or RSA private keys.
  *
- * <p>Host key verification uses a known_hosts file when available.
- * Falls back to accept-all in dev mode (logged as a warning).
+ * <p>Host key verification is trust-on-first-use: the first connection to a node
+ * accepts and persists its host key to {@code ~/.rigger/known_hosts}; subsequent
+ * connections are verified strictly against that persisted entry, and a mismatch
+ * (e.g. a MITM, or a re-provisioned node with a new host key) is rejected.
  */
 @Component
 public class RiggerSshClient {
@@ -36,13 +40,20 @@ public class RiggerSshClient {
     @PostConstruct
     public void start() {
         client = SshClient.setUpDefaultClient();
-        // Disable password auth — key-based only
-        client.setServerKeyVerifier((clientSession, remoteAddress, serverKey) -> {
-            // TODO Phase 3: replace with KnownHostsServerKeyVerifier
-            // For now, log and accept — provisioner only connects to declared cluster IPs
-            log.debug("Accepting server key from {}", remoteAddress);
-            return true;
-        });
+
+        Path knownHosts = Paths.get(System.getProperty("user.home"), ".rigger", "known_hosts");
+        try {
+            Files.createDirectories(knownHosts.getParent());
+        } catch (IOException e) {
+            throw new ProvisioningException("local", "Failed to create " + knownHosts.getParent(), e);
+        }
+
+        // Unknown hosts are accepted and persisted on first connect (TOFU). Once a host is
+        // recorded, KnownHostsServerKeyVerifier itself rejects any key that doesn't match.
+        client.setServerKeyVerifier(new DefaultKnownHostsServerKeyVerifier(
+            AcceptAllServerKeyVerifier.INSTANCE, true, knownHosts));
+        log.info("SSH host keys tracked in {}", knownHosts);
+
         client.start();
         log.info("Rigger SSH client started");
     }

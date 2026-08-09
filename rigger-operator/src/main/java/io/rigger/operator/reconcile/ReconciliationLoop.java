@@ -18,7 +18,8 @@ import java.time.Instant;
  *
  * <p>Each cycle:
  * <ol>
- *   <li>Runs DeploymentController, ServiceController, ConfigMapController in parallel</li>
+ *   <li>Runs DeploymentController, ServiceController, ConfigMapController, SecretController
+ *       in parallel</li>
  *   <li>Records the cycle result (changes, errors, duration)</li>
  *   <li>Publishes a ReconciliationEvent for the UI and audit log</li>
  * </ol>
@@ -34,15 +35,18 @@ public class ReconciliationLoop {
     private final DeploymentController deploymentCtrl;
     private final ServiceController    serviceCtrl;
     private final ConfigMapController  configMapCtrl;
+    private final SecretController     secretCtrl;
     private final RiggerEventBus       eventBus;
 
     public ReconciliationLoop(DeploymentController deploymentCtrl,
                                ServiceController    serviceCtrl,
                                ConfigMapController  configMapCtrl,
+                               SecretController     secretCtrl,
                                RiggerEventBus       eventBus) {
         this.deploymentCtrl = deploymentCtrl;
         this.serviceCtrl    = serviceCtrl;
         this.configMapCtrl  = configMapCtrl;
+        this.secretCtrl     = secretCtrl;
         this.eventBus       = eventBus;
     }
 
@@ -60,12 +64,14 @@ public class ReconciliationLoop {
             var deployFuture = scope.fork(() -> runController("Deployment", deploymentCtrl::reconcile));
             var svcFuture    = scope.fork(() -> runController("Service",    serviceCtrl::reconcile));
             var cfgFuture    = scope.fork(() -> runController("ConfigMap",  configMapCtrl::reconcile));
+            var secretFuture = scope.fork(() -> runController("Secret",     secretCtrl::reconcile));
 
             scope.join();
             // Collect results — individual failures are already logged inside runController
             totalChanges += deployFuture.get();
             totalChanges += svcFuture.get();
             totalChanges += cfgFuture.get();
+            totalChanges += secretFuture.get();
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

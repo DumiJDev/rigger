@@ -42,7 +42,7 @@ public class AuthController {
             auditService.recordLogin(req.username(), null, httpReq.getRemoteAddr(), false,
                 "Invalid credentials");
             return ResponseEntity.status(401).body(
-                new io.rigger.api.dto.ErrorResponse(401, "Unauthorized",
+                io.rigger.api.dto.ErrorResponse.of(401, "Unauthorized",
                     "Invalid username or password", "/api/v1/auth/login"));
         }
 

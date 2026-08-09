@@ -16,7 +16,7 @@ and a React UI, built as a Java 21 / Spring Boot 3.3.5 Maven multi-module reacto
 | `rigger-provisioner` | SSH-based cluster provisioning (Apache Mina SSHD) — Docker install, `docker swarm init/join`, `ClusterOrchestrator` for `cluster up`/`sync`. |
 | `rigger-security` | Auth (`UserStore`, `JwtTokenService`, `RiggerAuthenticationFilter`), RBAC (`RbacPolicyEngine`), secret encryption (`SecretEncryptor`, AES-256-GCM), audit (`AuditService`). |
 | `rigger-store` | Spring Data JPA + SQLite (WAL mode), Flyway migrations in `db/migration/`. |
-| `rigger-operator` | Reconciliation loop (virtual threads via `StructuredTaskScope`), HPA autoscaler. |
+| `rigger-operator` | Reconciliation loop (virtual threads via `StructuredTaskScope`) running Deployment/Service/ConfigMap/Secret controllers in parallel each cycle, plus the HPA autoscaler. `SecretController` decrypts and pushes Secret values into Docker Secrets; create-only, same maturity as `ConfigMapController` (see Known Gaps). |
 | `rigger-gitops` | JGit-based poll-and-apply agent (`GitOpsAgent`), bypasses HTTP/RBAC by design (trusted internal path via `ManifestApplyService`). |
 | `rigger-api` | Spring MVC REST layer (`WorkloadController`, `ClusterController`, `AuthController`, `UserController`, `AuditController`). |
 | `rigger-cli` | `riggerctl` — Picocli-based CLI. |
@@ -35,6 +35,12 @@ install for every Maven invocation:
 ```bash
 export JAVA_HOME=/path/to/jdk-21
 ```
+
+The root `pom.xml`'s `maven-compiler-plugin` also sets `<parameters>true</parameters>` — required
+for Spring MVC's implicit `@PathVariable`/`@RequestParam` name binding (e.g.
+`@PathVariable String namespace` without an explicit `@PathVariable("namespace")`). Without it,
+any endpoint relying on implicit parameter names throws at request time, not at compile time —
+easy to miss until you actually call that specific endpoint.
 
 ### Full build
 
@@ -60,12 +66,14 @@ mvn spring-boot:run -Dspring-boot.run.jvmArguments="--enable-preview"
 ```
 
 Server comes up on `https://localhost:7433`. First boot auto-generates `RIGGER_MASTER_KEY`
-(logged once, ephemeral) and bootstraps an `admin`/`admin` user (dev only — see Security Model).
+(logged once, ephemeral) and, if `RIGGER_ADMIN_PASSWORD` isn't set, a one-time random admin
+password — read it from the startup log (`WARN ... admin / <password>`); see Security Model.
+With `SPRING_PROFILES_ACTIVE=prod`, the server refuses to start instead of generating one.
 
 ```bash
 curl -sk https://localhost:7433/actuator/health
 curl -sk -X POST https://localhost:7433/api/v1/auth/login \
-  -H "Content-Type: application/json" -d '{"username":"admin","password":"admin"}'
+  -H "Content-Type: application/json" -d '{"username":"admin","password":"<from-log>"}'
 ```
 
 Follow `QUICK-START.md` for the full CLI flow (`riggerctl init --insecure` → `login` → `apply`).
@@ -80,14 +88,20 @@ Follow `QUICK-START.md` for the full CLI flow (`riggerctl init --insecure` → `
   `identities.cert_serial` column are unused placeholders. Real mTLS is out of scope (see
   Known Gaps / Out of Scope).
 - **RBAC enforcement**: `RbacPolicyEngine.authorize(ctx, action, kind)` called explicitly at the
-  top of each controller method. A declarative `@RiggerAuthorize` + `RbacAspect` AOP mechanism
-  exists in `rigger-security` but is currently unused dead code — a future pass should either
-  wire it up as the single enforcement mechanism (recommended, before adding more endpoints) or
-  remove it.
-- **Secrets**: `SecretSpec.data` values are base64 in the YAML manifest. `SecretEncryptor`
-  (AES-256-GCM, in `rigger-security`) is fully implemented but **not yet wired** into the
-  apply/read path — `WorkloadController.apply()` currently persists Secret specs unencrypted
-  into `resources.spec_json`. This is the top security gap to close next (see Known Gaps).
+  top of each controller method — this is the one and only enforcement mechanism. An AOP-based
+  `@RiggerAuthorize` alternative was attempted and **deleted**: it required `RiggerContext` to be
+  a method *parameter* (controllers build it internally from the request) and a single resource
+  kind fixed at compile time (`WorkloadController.apply()` handles a mixed batch of kinds per
+  call). Any new controller method touching a resource MUST start with an explicit
+  `rbac.authorize(...)` call — there is no compiler-enforced safety net for this, only convention.
+- **Secrets**: `SecretSpec.data` values are base64 in the YAML manifest. `WorkloadController.apply()`
+  encrypts each value with `SecretEncryptor` (AES-256-GCM) before persisting to
+  `resources.spec_json` — the DB only ever holds ciphertext. Reads (API/CLI/UI) always show
+  `{"keys":"redacted"}`, never decrypt. The one legitimate decryption point is
+  `rigger-operator`'s `SecretController`, which decrypts and pushes the real value into a Docker
+  Secret via `SecretAdapter` (Swarm needs the actual usable value — it has its own independent
+  at-rest encryption, unrelated to Rigger's). Audit log entries for Secret applies record
+  `"<redacted-secret-data>"` instead of the spec JSON, encrypted or not.
 - **Database**: SQLite via Spring Data JPA + Flyway, WAL mode. Hibernate needs
   `org.hibernate.community.dialect.SQLiteDialect` (from `hibernate-community-dialects`,
   added to `rigger-server`'s pom) since SQLite has no first-party Hibernate dialect.
@@ -101,39 +115,47 @@ Follow `QUICK-START.md` for the full CLI flow (`riggerctl init --insecure` → `
 
 ## Security model (current state)
 
-- **Passwords**: hashed with a single hardcoded static salt + SHA-256 (`UserStore`) — **known
-  weak**, scheduled for a BCrypt replacement. Do not treat current hashes as secure.
-- **Users**: in-memory only (`ConcurrentHashMap` in `UserStore`), despite an `identities` table
-  existing in the Flyway schema — all non-bootstrap users are lost on restart. Needs a JPA-backed
-  `IdentityRepository` (see Known Gaps).
-- **Bootstrap admin**: defaults to `admin`/`admin` with just a warning log. Override via
-  `RIGGER_ADMIN_PASSWORD`. Do not run with the default in anything but local dev.
-- **JWT signing key**: `RIGGER_JWT_KEY` env var; falls back to an insecure default and silently
-  zero-pads short keys rather than rejecting them. Always set an explicit ≥32-byte key outside dev.
-- **Secrets at rest**: **not actually encrypted yet** despite `SecretEncryptor` existing — see
-  Architecture Decisions above. Treat Secret resources as plaintext-equivalent (base64) until
-  this is wired up.
-- **SSH provisioning**: `RiggerSshClient` accepts any host key unconditionally (no verification) —
-  MITM risk during `cluster up`/`sync`. Needs trust-on-first-use host-key pinning.
-- **Docker install channel**: `DockerInstaller` interpolates `DockerSpec.channel()` directly into
-  a shell command run over SSH — needs allowlist validation before use.
-- **Audit log**: append-only by convention (`AuditService` only calls `.save()`), not enforced at
-  the DB layer. Currently passes Secret spec JSON as-is into `afterState`/`beforeState` —
-  redaction needs to land alongside the secret-encryption fix.
+- **Passwords**: BCrypt (`PasswordEncoder` bean in `SecurityAutoConfiguration`, injected into
+  `UserStore`) — per-user random salt. Pre-existing SHA-256+static-salt hashes were never
+  migrated (clean cutover; there were no real users yet) — anyone created before this change
+  must be recreated.
+- **Users**: persisted via JPA (`IdentityRepository`/`IdentityEntity`, backed by the
+  `identities` table + a `password_hash` column added in `V3__identities_password_hash.sql`).
+  Survive restarts; verified by creating a user, restarting the server, and confirming login
+  still works.
+- **Bootstrap admin**: with `RIGGER_ADMIN_PASSWORD` unset — fails startup under
+  `SPRING_PROFILES_ACTIVE=prod`; otherwise generates a random password, logs it once
+  (`WARN ... admin / <password>`), never persists it in plaintext anywhere. Set
+  `RIGGER_ADMIN_PASSWORD` explicitly for any environment that matters.
+- **JWT signing key**: `RIGGER_JWT_KEY` env var, validated in `JwtTokenService`'s
+  `@PostConstruct`. Default/short (<32 char) keys fail startup under the `prod` profile;
+  elsewhere they're padded with a warning (dev/qa convenience only).
+- **Secrets at rest**: encrypted (AES-256-GCM via `SecretEncryptor`) before being persisted —
+  see Architecture Decisions above for the full data flow. Verified end-to-end: applied a
+  Secret, confirmed the raw SQLite row holds ciphertext (not the original base64), confirmed
+  the reconciliation loop pushes the real decrypted value into a Docker Secret (mounted a test
+  container and read the value back).
+- **SSH provisioning**: `RiggerSshClient` uses trust-on-first-use host-key verification
+  (`DefaultKnownHostsServerKeyVerifier`, backed by `~/.rigger/known_hosts`). First connection to
+  a node accepts and persists its key; a later mismatch (MITM, or a node rebuilt with a new
+  host key) is rejected with `ProvisioningException`. Verified against a real SSH server.
+- **Docker install channel**: `DockerSpec`'s compact constructor rejects any `channel` value
+  outside `stable`/`test`/`nightly` (defense in depth: also re-checked in `DockerInstaller`
+  right before shell interpolation).
+- **Audit log**: append-only by convention (`AuditService` only calls `.save()`), not enforced
+  at the DB layer. Secret applies record `"<redacted-secret-data>"` instead of spec JSON.
+- **Error responses**: uncaught exceptions (`GlobalExceptionHandler.generic()`) return a generic
+  message + correlation ID to the client; the real exception (message, stack trace) is logged
+  server-side tagged with that same ID. The four other handlers (403/404/422/401) already return
+  intentional, safe messages and are unchanged.
 
 ## Known gaps / roadmap
 
-Tracked here so they read as deliberate backlog, not oversights:
+Tracked here so they read as deliberate backlog, not oversights. Security-critical items
+(secret encryption, password hashing, admin/JWT hardening, SSH host-key verification, shell
+injection, RBAC mechanism, generic error responses) are done — see Security model above.
+Remaining gaps are feature-completion and polish:
 
-- Wire `SecretEncryptor`/`SecretAdapter` into the Secret apply/read/Swarm-push path; redact
-  Secret data before writing to the audit log.
-- Replace `UserStore`'s SHA-256+static-salt hashing with BCrypt; back it with a JPA
-  `IdentityRepository` instead of an in-memory map.
-- Fail-fast (outside dev profile) on default/short JWT signing key and default admin password.
-- SSH host-key verification (trust-on-first-use) in `rigger-provisioner`.
-- Allowlist `DockerSpec.channel()` before shell interpolation in `DockerInstaller`.
-- Decide the fate of `@RiggerAuthorize`/`RbacAspect` (wire up or delete) before adding more
-  `rigger-api` controllers.
 - Missing/broken endpoints referenced by `riggerctl`/README but absent in `rigger-api`:
   `cluster up`/`cluster sync` (logic exists in `ClusterOrchestrator`, just not wired to a
   controller), pods listing, streaming logs (`riggerctl logs --follow` is broken end-to-end —
