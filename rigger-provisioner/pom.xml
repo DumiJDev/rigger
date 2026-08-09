@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.rigger</groupId>
+        <artifactId>rigger</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>rigger-provisioner</artifactId>
+    <name>Rigger Provisioner</name>
+    <description>
+        Infrastructure-as-code engine. Reads rigger.cluster.yaml, connects via SSH (MINA SSHD),
+        installs Docker on bare nodes, initialises Docker Swarm, and keeps cluster state
+        synchronised with the declared spec.
+    </description>
+
+    <dependencies>
+        <dependency><groupId>io.rigger</groupId><artifactId>rigger-core</artifactId></dependency>
+        <dependency><groupId>io.rigger</groupId><artifactId>rigger-store</artifactId></dependency>
+        <dependency><groupId>io.rigger</groupId><artifactId>rigger-events</artifactId></dependency>
+
+        <!-- Spring Boot (scheduling, config, DI) -->
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter</artifactId></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-configuration-processor</artifactId><optional>true</optional></dependency>
+
+        <!-- SSH — pure Java, no native OpenSSH dependency -->
+        <dependency>
+            <groupId>org.apache.sshd</groupId>
+            <artifactId>sshd-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.sshd</groupId>
+            <artifactId>sshd-sftp</artifactId>
+        </dependency>
+
+        <!-- YAML parsing for rigger.cluster.yaml -->
+        <dependency><groupId>com.fasterxml.jackson.dataformat</groupId><artifactId>jackson-dataformat-yaml</artifactId></dependency>
+        <dependency><groupId>com.fasterxml.jackson.datatype</groupId><artifactId>jackson-datatype-jsr310</artifactId></dependency>
+
+        <!-- Test -->
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>org.mockito</groupId><artifactId>mockito-junit-jupiter</artifactId><scope>test</scope></dependency>
+    </dependencies>
+</project>

@@ -1,0 +1,17 @@
+.idea
+.vscode
+
+**/target
+**/build
+**/out
+**/dist
+**/node_modules
+
+# Generated UI bundle copied into the server jar — rebuild with `npm run build`
+rigger-server/src/main/resources/static/ui
+
+# Local runtime state
+*.db
+*.db-shm
+*.db-wal
+*.log

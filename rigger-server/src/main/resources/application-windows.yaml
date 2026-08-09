@@ -1,0 +1,8 @@
+# Windows profile — auto-activated when os.name starts with "Windows"
+# Activate manually: --spring.profiles.active=windows
+
+rigger:
+  docker:
+    # Docker Desktop on Windows uses a named pipe
+    socket: npipe:////./pipe/docker_engine
+    host:
