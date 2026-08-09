@@ -78,14 +78,14 @@ public class ManifestParser {
             String trimmed = doc.trim();
             if (trimmed.isEmpty()) continue;
             var root = (ObjectNode) yaml.readTree(trimmed);
-            var manifest = parseDocument(root, sourceName);
+            var manifest = parseDocument(root, sourceName, trimmed);
             validator.validate(manifest);
             results.add(manifest);
         }
         return results;
     }
 
-    private ParsedManifest parseDocument(ObjectNode root, String source) {
+    private ParsedManifest parseDocument(ObjectNode root, String source, String rawDocument) {
         String apiVersion = root.path("apiVersion").asText();
         String kind = root.path("kind").asText();
 
@@ -122,7 +122,7 @@ public class ManifestParser {
                 List.of("Failed to parse spec for " + kind + " '" + meta.qualifiedName() + "': " + e.getMessage()));
         }
 
-        return new ParsedManifest(new RiggerManifest(apiVersion, kind, meta, spec), source);
+        return new ParsedManifest(new RiggerManifest(apiVersion, kind, meta, spec), source, rawDocument);
     }
 
     private Map<String, String> parseStringMap(com.fasterxml.jackson.databind.JsonNode node) {

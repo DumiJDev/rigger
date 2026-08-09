@@ -15,10 +15,15 @@ import io.rigger.security.crypto.SecretEncryptor;
 import io.rigger.security.rbac.*;
 import io.rigger.store.entity.ResourceEntity;
 import io.rigger.store.repository.ResourceRepository;
+import io.rigger.swarm.adapter.ConfigAdapter;
+import io.rigger.swarm.adapter.SecretAdapter;
 import io.rigger.swarm.adapter.ServiceAdapter;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -33,6 +38,8 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/v1/namespaces/{namespace}")
 public class WorkloadController {
 
+    private static final Logger log = LoggerFactory.getLogger(WorkloadController.class);
+
     private final ResourceRepository   store;
     private final ManifestParser       parser;
     private final ManifestSchemaValidator schemaValidator;
@@ -40,6 +47,8 @@ public class WorkloadController {
     private final AuditService         audit;
     private final RiggerEventBus       eventBus;
     private final ServiceAdapter       swarmAdapter;
+    private final ConfigAdapter        configAdapter;
+    private final SecretAdapter        secretAdapter;
     private final SecretEncryptor      secretEncryptor;
     private final ObjectMapper         mapper = new ObjectMapper();
 
@@ -47,11 +56,13 @@ public class WorkloadController {
                                ManifestSchemaValidator schemaValidator,
                                RbacPolicyEngine rbac, AuditService audit,
                                RiggerEventBus eventBus, ServiceAdapter swarmAdapter,
+                               ConfigAdapter configAdapter, SecretAdapter secretAdapter,
                                SecretEncryptor secretEncryptor) {
         this.store = store; this.parser = parser;
         this.schemaValidator = schemaValidator;
         this.rbac = rbac; this.audit = audit;
         this.eventBus = eventBus; this.swarmAdapter = swarmAdapter;
+        this.configAdapter = configAdapter; this.secretAdapter = secretAdapter;
         this.secretEncryptor = secretEncryptor;
     }
 
@@ -72,7 +83,7 @@ public class WorkloadController {
         for (var pm : parsed) {
             var manifest = pm.manifest();
             rbac.authorize(ctx, "apply", manifest.kind());
-            schemaValidator.validateOrThrow(manifest.kind(), req.manifest());
+            schemaValidator.validateOrThrow(manifest.kind(), pm.rawYaml());
 
             Object spec = manifest.spec();
             if ("Secret".equals(manifest.kind()) && spec instanceof SecretSpec secretSpec) {
@@ -131,6 +142,49 @@ public class WorkloadController {
         var ctx = ctx(req, namespace);
         rbac.authorize(ctx, "get", "ConfigMap");
         return ResponseEntity.ok(toResponses(store.findByKindAndNamespace("ConfigMap", namespace)));
+    }
+
+    @GetMapping("/pods")
+    public ResponseEntity<List<PodResponse>> listPods(
+            @PathVariable String namespace, HttpServletRequest req) {
+        var ctx = ctx(req, namespace);
+        rbac.authorize(ctx, "get", "Pod");
+
+        var pods = new ArrayList<PodResponse>();
+        for (var deployment : store.findByKindAndNamespace("Deployment", namespace)) {
+            var svc = swarmAdapter.find(namespace, deployment.getName());
+            if (svc.isEmpty()) continue;
+            for (var task : swarmAdapter.listTasks(svc.get().getId())) {
+                var status = task.getStatus();
+                var containerSpec = task.getSpec() != null ? task.getSpec().getContainerSpec() : null;
+                pods.add(new PodResponse(
+                    task.getId(), namespace, deployment.getName(),
+                    containerSpec != null ? containerSpec.getImage() : null,
+                    task.getNodeId(),
+                    status != null && status.getState() != null ? status.getState().name() : "UNKNOWN",
+                    task.getDesiredState() != null ? task.getDesiredState().name() : "UNKNOWN",
+                    status != null ? status.getMessage() : null,
+                    task.getCreatedAt()));
+            }
+        }
+        return ResponseEntity.ok(pods);
+    }
+
+    @GetMapping("/pods/{podName}/logs")
+    public ResponseEntity<StreamingResponseBody> podLogs(
+            @PathVariable String namespace, @PathVariable String podName,
+            @RequestParam(defaultValue = "false") boolean follow,
+            HttpServletRequest req) {
+        var ctx = ctx(req, namespace);
+        rbac.authorize(ctx, "logs", "Pod");
+
+        String containerId = resolveContainerId(namespace, podName);
+        if (containerId == null) {
+            throw new ResourceNotFoundException(ResourceKind.POD, namespace, podName);
+        }
+
+        StreamingResponseBody body = out -> swarmAdapter.streamLogs(containerId, follow, out);
+        return ResponseEntity.ok().contentType(MediaType.TEXT_PLAIN).body(body);
     }
 
     @GetMapping("/secrets")
@@ -213,6 +267,69 @@ public class WorkloadController {
         return ResponseEntity.noContent().build();
     }
 
+    @DeleteMapping("/services/{name}")
+    public ResponseEntity<Void> deleteService(
+            @PathVariable String namespace, @PathVariable String name, HttpServletRequest req) {
+        var ctx = ctx(req, namespace);
+        rbac.authorize(ctx, "delete", "Service");
+
+        store.findByKindAndNamespaceAndName("Service", namespace, name)
+            .orElseThrow(() -> new ResourceNotFoundException(ResourceKind.SERVICE, namespace, name));
+
+        // No Swarm-side object to clean up yet — ServiceController.reconcile() is still a
+        // no-op (Service resources aren't pushed to Swarm). Once it reconciles real published
+        // ports, this delete should also revert those on the underlying Deployment's service.
+        store.deleteByKindAndNamespaceAndName("Service", namespace, name);
+
+        var ref = new ResourceRef(ResourceKind.SERVICE, namespace, name);
+        eventBus.publish(new ResourceDeletedEvent(ref, ctx.identityName()));
+        audit.recordSuccess(ctx, AuditAction.DELETE, "Service", name, null, null);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/configmaps/{name}")
+    public ResponseEntity<Void> deleteConfigMap(
+            @PathVariable String namespace, @PathVariable String name, HttpServletRequest req) {
+        var ctx = ctx(req, namespace);
+        rbac.authorize(ctx, "delete", "ConfigMap");
+
+        store.findByKindAndNamespaceAndName("ConfigMap", namespace, name)
+            .orElseThrow(() -> new ResourceNotFoundException(ResourceKind.CONFIG_MAP, namespace, name));
+
+        try {
+            configAdapter.find(namespace, name).ifPresent(cfg -> configAdapter.delete(cfg.getId()));
+        } catch (Exception e) {
+            // Don't let a Swarm-side lookup/delete failure block removing Rigger's own record —
+            // the next reconciliation pass (or a manual `docker config rm`) can clean up Swarm.
+            log.warn("Could not remove Swarm Config for {}/{}: {}", namespace, name, e.getMessage());
+        }
+        store.deleteByKindAndNamespaceAndName("ConfigMap", namespace, name);
+
+        var ref = new ResourceRef(ResourceKind.CONFIG_MAP, namespace, name);
+        eventBus.publish(new ResourceDeletedEvent(ref, ctx.identityName()));
+        audit.recordSuccess(ctx, AuditAction.DELETE, "ConfigMap", name, null, null);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/secrets/{name}")
+    public ResponseEntity<Void> deleteSecret(
+            @PathVariable String namespace, @PathVariable String name, HttpServletRequest req) {
+        var ctx = ctx(req, namespace);
+        rbac.authorize(ctx, "delete", "Secret");
+
+        store.findByKindAndNamespaceAndName("Secret", namespace, name)
+            .orElseThrow(() -> new ResourceNotFoundException(ResourceKind.SECRET, namespace, name));
+
+        secretAdapter.find(namespace, name).ifPresent(s -> secretAdapter.delete(s.getId()));
+        store.deleteByKindAndNamespaceAndName("Secret", namespace, name);
+
+        var ref = new ResourceRef(ResourceKind.SECRET, namespace, name);
+        eventBus.publish(new ResourceDeletedEvent(ref, ctx.identityName()));
+        // Never carries secret data — beforeState/afterState are already null for deletes.
+        audit.recordSuccess(ctx, AuditAction.DELETE, "Secret", name, null, null);
+        return ResponseEntity.noContent().build();
+    }
+
     // ── helpers ────────────────────────────────────────────────────────────
 
     private RiggerContext ctx(HttpServletRequest req, String namespace) {
@@ -223,6 +340,21 @@ public class WorkloadController {
 
     private List<ResourceResponse> toResponses(List<ResourceEntity> entities) {
         return entities.stream().map(this::toResponse).toList();
+    }
+
+    /** Finds the container ID for a task (pod) by scanning this namespace's Deployments. */
+    private String resolveContainerId(String namespace, String podName) {
+        for (var deployment : store.findByKindAndNamespace("Deployment", namespace)) {
+            var svc = swarmAdapter.find(namespace, deployment.getName());
+            if (svc.isEmpty()) continue;
+            for (var task : swarmAdapter.listTasks(svc.get().getId())) {
+                if (task.getId().equals(podName)) {
+                    var containerStatus = task.getStatus() != null ? task.getStatus().getContainerStatus() : null;
+                    return containerStatus != null ? containerStatus.getContainerID() : null;
+                }
+            }
+        }
+        return null;
     }
 
     /** Encrypts every value in a Secret's data map. Never called on read paths. */

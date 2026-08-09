@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import java.util.*;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 /**
@@ -26,11 +27,18 @@ public class ResourceDiffer {
 
     /**
      * Computes a ReconcilePlan using docker-java Service objects.
+     *
+     * @param hashFn Computes the spec-hash a resource's Swarm service label should have if it's
+     *               fully in sync — must be the exact same computation the caller uses when it
+     *               actually creates/updates the Swarm service (see {@code ServiceAdapter}),
+     *               otherwise the diff never converges: it'll see a mismatch and re-update on
+     *               every single cycle forever.
      */
     public <T> DockerJavaReconcilePlan diffDockerJava(
             List<ResourceEntity> desired,
             List<Service> actual,
-            Class<T> specClass) {
+            Class<T> specClass,
+            BiFunction<ObjectMeta, T, String> hashFn) {
 
         var actualIndex = actual.stream()
             .filter(s -> s.getSpec() != null && s.getSpec().getLabels() != null)
@@ -62,7 +70,7 @@ public class ResourceDiffer {
             var existing = actualIndex.get(key);
             if (existing == null) {
                 toCreate.add(new ReconcilePlan.DesiredResource(meta, spec));
-            } else if (needsUpdate(entity, existing)) {
+            } else if (needsUpdate(meta, spec, existing, hashFn)) {
                 toUpdate.add(new DockerJavaReconcilePlan.UpdatePair(existing, meta, spec));
             } else {
                 unchanged++;
@@ -81,16 +89,17 @@ public class ResourceDiffer {
         return new DockerJavaReconcilePlan(toCreate, toUpdate, toDelete, unchanged);
     }
 
-    /** Convenience overload — infers DeploymentSpec as specClass. */
+    /** Convenience overload — infers DeploymentSpec as specClass, hashes on the spec object alone. */
     public DockerJavaReconcilePlan diffDockerJava(List<ResourceEntity> desired, List<Service> actual) {
-        return diffDockerJava(desired, actual, io.rigger.core.domain.resource.DeploymentSpec.class);
+        return diffDockerJava(desired, actual, io.rigger.core.domain.resource.DeploymentSpec.class,
+            (meta, spec) -> Integer.toHexString(spec.hashCode()));
     }
 
-    private boolean needsUpdate(ResourceEntity entity, Service service) {
+    private <T> boolean needsUpdate(ObjectMeta meta, T spec, Service service, BiFunction<ObjectMeta, T, String> hashFn) {
         var labels = service.getSpec() != null ? service.getSpec().getLabels() : null;
         if (labels == null) return true;
         String storedHash  = labels.get(LABEL_SPEC_HASH);
-        String currentHash = Integer.toHexString(entity.getSpecJson().hashCode());
+        String currentHash = hashFn.apply(meta, spec);
         return !currentHash.equals(storedHash);
     }
 }

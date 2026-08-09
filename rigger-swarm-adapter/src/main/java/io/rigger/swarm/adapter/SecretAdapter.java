@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Translates Rigger Secret resources to Docker Secrets using docker-java.
@@ -71,6 +72,22 @@ public class SecretAdapter {
                 .exec();
         } catch (Exception e) {
             throw new DockerApiException("Failed to list managed secrets", e);
+        }
+    }
+
+    /** Finds a Rigger-managed Secret by namespace and name (metadata only). */
+    public Optional<Secret> find(String namespace, String name) {
+        try {
+            return docker().listSecretsCmd()
+                .withLabelFilter(Map.of(
+                    "rigger.io/namespace", namespace,
+                    "rigger.io/name", name
+                ))
+                .exec()
+                .stream()
+                .findFirst();
+        } catch (Exception e) {
+            throw new DockerApiException("Failed to find secret " + namespace + "/" + name, e);
         }
     }
 

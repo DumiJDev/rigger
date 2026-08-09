@@ -293,8 +293,8 @@ riggerctl logs payments-api-pod-xyz -n production --follow
 # Ver identidade actual
 riggerctl whoami
 
-# Aprovar um novo utilizador (cluster-admin only)
-riggerctl user approve alice --role deployer --namespace production
+# Criar um novo utilizador (cluster-admin only)
+riggerctl user create alice --role deployer --namespace production -p <password>
 
 # Revogar acesso
 riggerctl user revoke alice
@@ -428,11 +428,12 @@ riggerctl apply -f docker-compose.yml -n staging
 ### Adicionar um utilizador
 
 ```bash
-# 1. O developer inicializa o CLI (gera keypair local)
-riggerctl init --server https://10.0.0.10:7433
+# 1. O admin cria a conta e atribui uma role (autenticação é por username/password + JWT)
+riggerctl user create alice --role deployer --namespace production -p <password>
 
-# 2. O admin aprova e atribui uma role
-riggerctl user approve alice --role deployer --namespace production
+# 2. Alice inicializa o CLI e faz login
+riggerctl init --server https://10.0.0.10:7433
+riggerctl login -u alice
 
 # 3. Alice pode agora usar o CLI
 riggerctl get deployments -n production
@@ -440,9 +441,9 @@ riggerctl get deployments -n production
 
 ### Princípios de segurança
 
-- **Sem passwords** — CLI usa certificados mTLS, nunca username/password
+- **Autenticação por JWT** — login com username/password emite um token JWT de curta duração; não há sessões nem estado no servidor entre pedidos
 - **Namespaces obrigatórios** — não há recursos sem namespace
-- **Secrets cifrados** — AES-256-GCM em repouso, nunca aparecem em logs
+- **Secrets cifrados** — AES-256-GCM em repouso, nunca aparecem em logs nem no audit log
 - **Audit log imutável** — todas as operações são registadas (quem, o quê, quando, de onde)
 - **Deny by default** — qualquer acesso não autorizado retorna 403
 
@@ -630,8 +631,10 @@ export RIGGER_MASTER_KEY=$(openssl rand -base64 32)
 # Verificar qual a role atribuída:
 riggerctl whoami
 
-# O admin pode actualizar a role:
-riggerctl user approve alice --role deployer --namespace production
+# O admin pode revogar e recriar o utilizador com outra role
+# (não há ainda um comando para actualizar a role de um utilizador existente):
+riggerctl user revoke alice
+riggerctl user create alice --role deployer --namespace production -p <password>
 ```
 
 ---

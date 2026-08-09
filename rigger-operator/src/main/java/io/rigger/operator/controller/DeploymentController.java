@@ -35,7 +35,7 @@ public class DeploymentController {
     public int reconcile() {
         var desired = store.findAllByKind("Deployment");
         var actual  = swarm.listManaged();          // returns List<Service> from docker-java
-        var plan    = differ.diffDockerJava(desired, actual);
+        var plan    = differ.diffDockerJava(desired, actual, DeploymentSpec.class, swarm::computeSpecHash);
 
         if (plan.isEmpty()) {
             log.debug("DeploymentController: {} in sync", plan.unchanged());

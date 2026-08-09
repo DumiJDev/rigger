@@ -163,23 +163,67 @@ Remaining gaps are feature-completion and polish:
   for Service/ConfigMap/Secret (only Deployment delete exists today), a read-only GitOps status
   endpoint (`rigger-ui`'s GitOps page already calls it; `rigger-gitops` already tracks the state,
   just needs a controller).
-- `rigger-operator`'s `ServiceController.reconcile()` is an intentional no-op stub — Service
-  resources are persisted but never reconciled onto Swarm. `ConfigMapController` only creates,
-  never updates/deletes (Swarm Configs are immutable once attached — needs a
-  create-new-version-and-swap pattern, mirroring `ResourceDiffer`'s use in `DeploymentController`).
-- HPA autoscaling never scales up: `MetricsSource` is a hardcoded stub returning 0. Needs a
-  polling `DockerStatsMetricsSource` using docker-java's `StatsCmd`.
+- `rigger-operator`'s `ServiceController.reconcile()` (MVP, Fase 2.7): resolves the target
+  Deployment by selector match and republishes `LoadBalancer` ports via `EndpointSpec`/
+  `PortConfig`; `ClusterIP` stays a no-op since Swarm's overlay DNS already covers it. Full
+  ingress-controller-grade routing remains out of scope.
+- `ConfigMapController` (Fase 2.8) now creates a new, uniquely-named Docker Config version on
+  content change instead of updating in place (Configs are immutable once created). Referencing
+  Deployments pick up the new version on their own next reconciliation cycle — `ServiceAdapter`
+  resolves `configMapRefs` into `ContainerSpecConfig`s and folds their resolved IDs into the
+  Deployment's `spec-hash` label, so a ConfigMap-only content change is enough to trigger a
+  Deployment update without the Deployment spec itself changing. Orphaned versions (superseded,
+  or belonging to a deleted ConfigMap) are removed once no Swarm service still references them —
+  confirmed by scanning every managed service's `ContainerSpec.configs`. Note: docker-java
+  3.7.1's `ConfigSpec` doesn't deserialise labels back on list/find responses, so cleanup
+  recovers namespace/name by parsing the Config's own name (`rigger__{ns}__{name}__{hash}`,
+  `__`-delimited since Rigger names never contain `__` — see `ConfigAdapter.parseFamilyKey`)
+  rather than reading labels back.
+- HPA autoscaling (Fase 2.9): `DockerStatsMetricsSource` polls per-container CPU via
+  docker-java's `StatsCmd` (non-streaming, one call per running task) and averages across a
+  Deployment's tasks — no Prometheus dependency. Cost scales with task count per HPA cycle
+  (default 30s); clusters with many tasks per Deployment will feel this as added latency,
+  not a correctness issue.
 - `ComposeConverter` (in `rigger-manifest`) exists but nothing detects/routes docker-compose
   input to it from `ApplyCommand`/`WorkloadController.apply()` — README's compose support claim
   is currently false.
-- CLI `user approve` doesn't exist (README artifact of the old mTLS/CSR-approval design); the
-  real, canonical flow is `riggerctl user create`.
 - rigger-ui: no login page / JWT integration yet (pages assume an already-authenticated session);
   namespace is hardcoded to `"production"` in every page instead of a real selector.
 - Cleanup candidates (do last, verify build after each): legacy `swarm/model/*` classes in
   `rigger-swarm-adapter` (superseded by docker-java types), duplicate unused CLI command classes
   in `rigger-cli/command/user/` (the real ones are static inner classes in `UserCommand`), unused
   UI dependencies (`components/ui/*` shadcn-style components, `recharts`).
+
+## Fase 2 final verification — bugs found and fixed
+
+Found via a real end-to-end smoke test (login → apply Deployment+Service+ConfigMap → get pods →
+ConfigMap content change → delete), not just `mvn clean verify`. Kept here since none of them
+were caught by compilation or unit tests — a reminder that reconciliation loops specifically
+need runtime convergence checks, not just "does it compile":
+
+- **Deployments re-updated on every single reconcile cycle, forever.** `ResourceDiffer.needsUpdate`
+  compared `entity.getSpecJson().hashCode()` (JSON string hash) against the `rigger.io/spec-hash`
+  label, which `ServiceAdapter` had set from `spec.hashCode()` (deserialized record hash) — two
+  unrelated hash functions that could never agree. Fixed by having `diffDockerJava` take a
+  `hashFn` parameter and `DeploymentController` pass `swarm::computeSpecHash`, so both sides use
+  the exact same computation.
+- **Every ordinary Deployment update silently wiped the Service's published ports.**
+  `ServiceAdapter.update()` rebuilds the whole `ServiceSpec` via `buildServiceSpec()`, which never
+  sets `EndpointSpec` — that's `ServiceController`'s job. Combined with the bug above (updates
+  firing every cycle), this produced a permanent wipe/republish loop, bumping the Swarm service's
+  version by the second on an idle cluster. Fixed by carrying over
+  `existing.getSpec().getEndpointSpec()` in `update()` when present.
+- **`ServiceType` only accepted Java constant names** (`CLUSTER_IP`/`LOAD_BALANCER`) while the
+  README and `service.schema.json` document Kubernetes-style casing (`ClusterIP`/`LoadBalancer`) —
+  any Service manifest written exactly as documented failed to parse. Fixed with a `@JsonCreator`
+  on `ServiceType` accepting both spellings, case-insensitively.
+- **Multi-document manifests always failed past the first document.**
+  `WorkloadController.apply()` validated every parsed document against `req.manifest()` — the
+  *entire* raw multi-doc YAML string — instead of that document's own text; `ManifestSchemaValidator`
+  only reads the first YAML document, so anything past it got validated against the wrong schema.
+  This broke the standard quick-start flow of applying Deployment+Service+ConfigMap in one file.
+  Fixed by having `ManifestParser` retain each document's own text in `ParsedManifest.rawYaml()`
+  and validating against that instead.
 
 ## Out of scope (do not re-litigate without a fresh decision)
 

@@ -67,7 +67,7 @@ public class ComposeConverter {
             var spec = new DeploymentSpec(replicas, Map.of("app", name), image,
                     env, null, null, null, List.of(), List.of());
             var meta = new ObjectMeta(name, ns, Map.of("app", name), Map.of());
-            out.add(new ParsedManifest(new RiggerManifest(RiggerManifest.API_VERSION, "Deployment", meta, spec), source));
+            out.add(new ParsedManifest(new RiggerManifest(RiggerManifest.API_VERSION, "Deployment", meta, spec), source, null));
 
             // Generate a ClusterIP service for each Compose service that exposes ports
             var ports = new ArrayList<ServicePort>();
@@ -82,7 +82,7 @@ public class ComposeConverter {
             if (!ports.isEmpty()) {
                 var svcSpec = new ServiceSpec(Map.of("app", name), ports, ServiceType.CLUSTER_IP);
                 var svcMeta = new ObjectMeta(name + "-svc", ns, Map.of("app", name), Map.of());
-                out.add(new ParsedManifest(new RiggerManifest(RiggerManifest.API_VERSION, "Service", svcMeta, svcSpec), source));
+                out.add(new ParsedManifest(new RiggerManifest(RiggerManifest.API_VERSION, "Service", svcMeta, svcSpec), source, null));
             }
         });
     }
@@ -95,7 +95,7 @@ public class ComposeConverter {
             entry.getValue().fields().forEachRemaining(e -> data.put(e.getKey(), e.getValue().asText()));
             var spec = new ConfigMapSpec(data);
             var meta = new ObjectMeta(name, ns, Map.of(), Map.of());
-            out.add(new ParsedManifest(new RiggerManifest(RiggerManifest.API_VERSION, "ConfigMap", meta, spec), source));
+            out.add(new ParsedManifest(new RiggerManifest(RiggerManifest.API_VERSION, "ConfigMap", meta, spec), source, null));
         });
     }
 
@@ -109,7 +109,7 @@ public class ComposeConverter {
             if (data.isEmpty()) return;
             var spec = new SecretSpec(data, null);
             var meta = new ObjectMeta(name, ns, Map.of(), Map.of());
-            out.add(new ParsedManifest(new RiggerManifest(RiggerManifest.API_VERSION, "Secret", meta, spec), source));
+            out.add(new ParsedManifest(new RiggerManifest(RiggerManifest.API_VERSION, "Secret", meta, spec), source, null));
         });
     }
 }

@@ -2,6 +2,7 @@ package io.rigger.security.config;
 
 import io.rigger.security.auth.RiggerAuthenticationFilter;
 import io.rigger.security.rbac.RbacPolicyEngine;
+import jakarta.servlet.DispatcherType;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.context.annotation.*;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -60,6 +61,14 @@ public class SecurityAutoConfiguration {
                 .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                 // SPA static assets — public
                 .requestMatchers("/ui/**", "/ui", "/").permitAll()
+                // Internal dispatches (error/async/forward/include — e.g. after a streaming
+                // response like pod logs is already committed) reuse the ORIGINAL request URI,
+                // not "/error" — so this must be matched by dispatcher type, not path — and
+                // have no SecurityContext of their own; permit them rather than throwing a
+                // secondary, response-already-sent AccessDeniedException. The actual endpoint
+                // was already authorized on the initial REQUEST dispatch.
+                .dispatcherTypeMatchers(DispatcherType.ERROR, DispatcherType.ASYNC,
+                    DispatcherType.FORWARD, DispatcherType.INCLUDE).permitAll()
                 // Everything else — checked by RiggerAuthenticationFilter
                 .anyRequest().authenticated()
             )

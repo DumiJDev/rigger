@@ -27,12 +27,14 @@ public class RbacPolicyEngine {
         Permission.of(RiggerRole.DEPLOYER, "delete", "Deployment"),
         Permission.of(RiggerRole.DEPLOYER, "delete", "Service"),
         Permission.of(RiggerRole.DEPLOYER, "delete", "ConfigMap"),
+        Permission.of(RiggerRole.DEPLOYER, "delete", "Secret"),
         Permission.of(RiggerRole.DEPLOYER, "get",    "Deployment"),
         Permission.of(RiggerRole.DEPLOYER, "get",    "Service"),
         Permission.of(RiggerRole.DEPLOYER, "get",    "ConfigMap"),
         Permission.of(RiggerRole.DEPLOYER, "get",    "Secret"),
         Permission.of(RiggerRole.DEPLOYER, "get",    "Pod"),
         Permission.of(RiggerRole.DEPLOYER, "get",    "Node"),
+        Permission.of(RiggerRole.DEPLOYER, "get",    "GitOps"),
         Permission.of(RiggerRole.DEPLOYER, "logs",   "Pod"),
         // VIEWER — read only
         Permission.of(RiggerRole.VIEWER, "get",  "Deployment"),
@@ -41,6 +43,7 @@ public class RbacPolicyEngine {
         Permission.of(RiggerRole.VIEWER, "get",  "Secret"),
         Permission.of(RiggerRole.VIEWER, "get",  "Pod"),
         Permission.of(RiggerRole.VIEWER, "get",  "Node"),
+        Permission.of(RiggerRole.VIEWER, "get",  "GitOps"),
         Permission.of(RiggerRole.VIEWER, "logs", "Pod"),
         // GITOPS_AGENT — apply only
         Permission.of(RiggerRole.GITOPS_AGENT, "apply", "Deployment"),
