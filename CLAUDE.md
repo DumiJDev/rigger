@@ -214,8 +214,14 @@ provisioning (`cluster up`/`sync` are never exercised), and HPA scaling under lo
   at the DB layer. Secret applies record `"<redacted-secret-data>"` instead of spec JSON.
 - **Error responses**: uncaught exceptions (`GlobalExceptionHandler.generic()`) return a generic
   message + correlation ID to the client; the real exception (message, stack trace) is logged
-  server-side tagged with that same ID. The four other handlers (403/404/422/401) already return
-  intentional, safe messages and are unchanged.
+  server-side tagged with that same ID. The other handlers return intentional, safe messages.
+  Three client-fault cases used to fall through to that generic 500 — a request that matched no
+  mapping (`NoResourceFoundException`), an unparseable body
+  (`HttpMessageNotReadableException`), and a bad query parameter (`InvalidRequestException`, e.g. an
+  unknown metric name) — so a caller's typo read as a server fault and logged a stack trace. They
+  now map to 404/400/400. `InvalidRequestException` carries a message we author, so unlike an
+  uncaught exception it is safe to return verbatim, and it is what lets a caller tell a typo from a
+  genuinely empty result.
 
 ## Known gaps / roadmap
 
@@ -252,11 +258,27 @@ Remaining gaps are feature-completion and polish:
   Deployment's tasks — no Prometheus dependency. Cost scales with task count per HPA cycle
   (default 30s); clusters with many tasks per Deployment will feel this as added latency,
   not a correctness issue.
+- **Metric history** is sampled server-side by `MetricsSampler` (rigger-operator) into
+  `metric_samples` (`V6`), every 30s by default, and read back via
+  `GET /api/v1/metrics/series?metric=&namespace=&name=&minutes=`. Server-side rather than
+  per-browser so history survives a reload and every operator sees the same picture. Metric names
+  are enumerated in `MetricNames` and an unknown one is a 400 — an empty array would be
+  indistinguishable from "no data yet". Cluster-wide series use `"cluster"` for both namespace and
+  name so every series has a full triple and one index serves every read.
+  - `MetricsCollector` is the single place current values are computed. The REST endpoints and the
+    sampler both use it; when they each computed the totals themselves, the number and the chart
+    above it disagreed within a day.
+  - `MetricsSampler.prune()` runs on its own hourly schedule (not inside the 30s sample, which
+    would issue ~2900 no-op deletes a day) and trims `metric_samples` past 24h **and `events` past
+    14 days** — `EventRepository.deleteOlderThan` existed unscheduled since `events` was added, so
+    that table had grown without bound.
+  - Volume is the product of two knobs and nothing warns you: 9 cluster series + 3 per Deployment
+    every 30s is ~200k rows/day at 20 Deployments, fine in SQLite at 24h retention; a week of
+    retention at 5s sampling is 8M.
 - The console covers login, namespace switching, topology (graph + list), the four workload kinds,
   pods with SSE log streaming, YAML apply, cluster ops, GitOps config, audit and users. Not yet
-  done there: editing a resource's YAML in place (apply is create/replace only), and any
-  time-series charting — the metrics endpoints are point-in-time samples, so the console would have
-  to keep its own window.
+  done there: editing a resource's YAML in place (apply is create/replace only), and charting the
+  series above (Fase 4 of the console redesign).
 
 - **Compose input** is detected server-side by content (top-level `services` map, no
   `apiVersion`/`kind`) and converted by `ComposeConverter` before anything else in
