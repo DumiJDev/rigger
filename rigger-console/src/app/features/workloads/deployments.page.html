@@ -2,56 +2,62 @@
   <r-page-header [title]="t('deployments.title')" [subtitle]="t('deployments.subtitle')">
   </r-page-header>
 
+  <r-list-toolbar
+    [(query)]="query"
+    [total]="items().length"
+    [shown]="visible().length"
+    [placeholder]="t('deployments.search')"
+  />
+
   <r-data-state
     [loading]="loading()"
     [error]="error() ? t(error()!) : null"
-    [empty]="!items().length"
-    [emptyMessage]="t('deployments.empty')"
+    [empty]="!visible().length"
+    [emptyMessage]="filteredOut() ? t('common.noMatches') : t('deployments.empty')"
     (retry)="load()"
   >
     <div class="surface table-wrap">
       <table class="data">
         <thead>
           <tr>
-            <th>{{ t('common.name') }}</th>
-            <th>{{ t('common.image') }}</th>
-            <th>{{ t('common.replicas') }}</th>
-            <th>{{ t('deployments.hpa') }}</th>
-            <th>{{ t('common.appliedBy') }}</th>
-            <th class="text-right">{{ t('common.actions') }}</th>
+            <th class="sortable" [attr.aria-sort]="ariaSort('name')" (click)="sortBy('name')">
+              {{ t('common.name') }}
+            </th>
+            <th class="sortable" [attr.aria-sort]="ariaSort('image')" (click)="sortBy('image')">
+              {{ t('common.image') }}
+            </th>
+            <th class="sortable num" [attr.aria-sort]="ariaSort('replicas')" (click)="sortBy('replicas')">
+              {{ t('common.replicas') }}
+            </th>
+            <th class="sortable" [attr.aria-sort]="ariaSort('hpa')" (click)="sortBy('hpa')">
+              {{ t('deployments.hpa') }}
+            </th>
+            <th class="sortable" [attr.aria-sort]="ariaSort('appliedBy')" (click)="sortBy('appliedBy')">
+              {{ t('common.appliedBy') }}
+            </th>
+            <th class="w-10"><span class="sr-only">{{ t('common.actions') }}</span></th>
           </tr>
         </thead>
         <tbody>
-          @for (item of items(); track item.name) {
+          @for (item of visible(); track item.name) {
             <tr>
               <td class="font-medium">{{ item.name }}</td>
               <td class="muted">{{ image(item) }}</td>
-              <td class="tabular-nums">{{ replicas(item) }}</td>
-              <td>{{ hasHpa(item) ? t('common.yes') : t('common.no') }}</td>
-              <td class="muted">{{ item.appliedBy || '—' }}</td>
+              <td class="num">{{ replicas(item) }}</td>
               <td>
-                <div class="flex justify-end gap-2">
-                  @if (auth.can('scale', 'Deployment')) {
-                    <button
-                      type="button"
-                      class="btn btn-ghost py-1"
-                      [disabled]="busyItem() === item.name"
-                      (click)="openScale(item)"
-                    >
-                      {{ t('deployments.scale') }}
-                    </button>
-                  }
-                  @if (canDelete()) {
-                    <button
-                      type="button"
-                      class="btn btn-danger py-1"
-                      [disabled]="busyItem() === item.name"
-                      (click)="confirming.set(item.name)"
-                    >
-                      {{ t('common.delete') }}
-                    </button>
-                  }
-                </div>
+                @if (hasHpa(item)) {
+                  <span class="chip">{{ t('common.yes') }}</span>
+                } @else {
+                  <span class="muted">{{ t('common.no') }}</span>
+                }
+              </td>
+              <td class="muted">{{ item.appliedBy || '—' }}</td>
+              <td class="text-right">
+                <r-row-menu
+                  [actions]="actionsFor(item)"
+                  [disabled]="busyItem() === item.name"
+                  (selected)="onAction($event, item)"
+                />
               </td>
             </tr>
           }

@@ -1,4 +1,4 @@
-import { effect, inject, signal } from '@angular/core';
+import { computed, effect, inject, signal } from '@angular/core';
 import { Observable, firstValueFrom } from 'rxjs';
 import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
@@ -6,13 +6,16 @@ import { ResourceResponse } from '../../core/api.models';
 import { NamespaceService } from '../../core/namespace.service';
 import { RefreshService } from '../../core/refresh.service';
 
+export type SortDir = 'asc' | 'desc';
+
 /**
- * Shared loading/deleting behaviour for the four resource list pages, which differ only in which
- * endpoint they call and which columns they render.
+ * Shared behaviour for the four resource list pages, which differ only in which endpoint they call
+ * and which columns they render: loading, deleting, and now searching and sorting too.
  *
  * <p>Not a component — the pages keep their own templates so each can show fields that actually
  * matter for its kind (ports for Services, key names for ConfigMaps) instead of a lowest-common
- * table.
+ * table. Which is exactly why shared *behaviour* belongs here: search and sort were added once and
+ * all four pages got them.
  */
 export abstract class ResourceListPage {
   protected readonly api = inject(ApiService);
@@ -24,6 +27,71 @@ export abstract class ResourceListPage {
   readonly error = signal<string | null>(null);
   readonly items = signal<ResourceResponse[]>([]);
   readonly busyItem = signal<string | null>(null);
+
+  readonly query = signal('');
+  readonly sortKey = signal('name');
+  readonly sortDir = signal<SortDir>('asc');
+
+  /**
+   * What the table renders: the loaded rows, filtered and sorted.
+   *
+   * <p>Client-side, deliberately. The API returns a namespace's resources in one unpaged response
+   * and these lists are tens of rows, not thousands — sorting on the server would mean a round trip
+   * per column click for no benefit. If a namespace ever holds enough resources for this to matter,
+   * the fix is paging the endpoint, not moving the comparison.
+   */
+  readonly visible = computed<ResourceResponse[]>(() => {
+    const needle = this.query().trim().toLowerCase();
+    const rows = needle
+      ? this.items().filter((i) => this.searchText(i).toLowerCase().includes(needle))
+      : [...this.items()];
+
+    const key = this.sortKey();
+    const factor = this.sortDir() === 'asc' ? 1 : -1;
+    return rows.sort((a, b) => factor * compare(this.sortValue(a, key), this.sortValue(b, key)));
+  });
+
+  /** True when a filter is hiding rows, so the empty state can say so instead of "no resources". */
+  readonly filteredOut = computed(() => this.items().length > 0 && this.visible().length === 0);
+
+  /**
+   * Clicking the active column flips direction; a different column sorts it ascending. Resetting to
+   * ascending matters — carrying the previous direction over makes a new column look sorted wrongly.
+   */
+  sortBy(key: string): void {
+    if (this.sortKey() === key) {
+      this.sortDir.update((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      this.sortKey.set(key);
+      this.sortDir.set('asc');
+    }
+  }
+
+  /** For `aria-sort` on the header cell: screen readers announce the state, and the CSS tints it. */
+  ariaSort(key: string): 'ascending' | 'descending' | 'none' {
+    if (this.sortKey() !== key) return 'none';
+    return this.sortDir() === 'asc' ? 'ascending' : 'descending';
+  }
+
+  /**
+   * Text a search matches against. Name and who applied it cover every kind; a page adds its own
+   * fields by overriding — Services their ports, ConfigMaps their key names.
+   */
+  protected searchText(item: ResourceResponse): string {
+    return `${item.name} ${item.appliedBy ?? ''}`;
+  }
+
+  /**
+   * Value to sort a column by. Pages override for their own columns and delegate here for the
+   * shared ones, so a new column is one case in one method rather than a comparator per page.
+   */
+  protected sortValue(item: ResourceResponse, key: string): string | number | undefined {
+    switch (key) {
+      case 'name':      return item.name;
+      case 'appliedBy': return item.appliedBy ?? '';
+      default:          return undefined;
+    }
+  }
 
   /** Path segment used by the delete endpoint: deployments | services | configmaps | secrets. */
   protected abstract readonly pathKind: string;
@@ -79,4 +147,17 @@ export abstract class ResourceListPage {
   protected specValue<T>(item: ResourceResponse, key: string): T | undefined {
     return item.spec?.[key] as T | undefined;
   }
+}
+
+/**
+ * Undefined sorts last in both directions rather than being treated as empty, so rows missing a
+ * value don't push real data down the list when sorting descending.
+ */
+function compare(a: string | number | undefined, b: string | number | undefined): number {
+  if (a === undefined && b === undefined) return 0;
+  if (a === undefined) return 1;
+  if (b === undefined) return -1;
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  // Numeric collation so "web-2" comes before "web-10"; a plain string sort reverses them.
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
 }

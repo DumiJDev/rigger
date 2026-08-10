@@ -45,6 +45,7 @@
     "all": "All",
     "appliedBy": "Applied by",
     "cancel": "Cancel",
+    "clear": "Clear",
     "close": "Close",
     "confirm": "Confirm",
     "created": "Created",
@@ -59,6 +60,7 @@
     "namespace": "Namespace",
     "never": "Never",
     "no": "No",
+    "noMatches": "Nothing matches your search",
     "none": "None",
     "refresh": "Refresh",
     "replicas": "Replicas",
@@ -76,6 +78,7 @@
     "deleteConfirm": "Delete ConfigMap {{name}}?",
     "empty": "No ConfigMaps in this namespace",
     "keys": "Keys",
+    "search": "Search by name or key",
     "subtitle": "Non-sensitive configuration",
     "title": "ConfigMaps"
   },
@@ -107,6 +110,7 @@
     "scale": "Scale",
     "scaleLabel": "Replica count",
     "scaleTitle": "Scale {{name}}",
+    "search": "Search by name or image",
     "subtitle": "Workloads in this namespace",
     "title": "Deployments"
   },
@@ -218,6 +222,7 @@
     "deleteConfirm": "Delete secret {{name}}?",
     "empty": "No secrets in this namespace",
     "redacted": "redacted",
+    "search": "Search by name",
     "subtitle": "Encrypted at rest and never returned by the API",
     "title": "Secrets"
   },
@@ -225,6 +230,7 @@
     "deleteConfirm": "Delete service {{name}}?",
     "empty": "No services in this namespace",
     "ports": "Ports",
+    "search": "Search by name or port",
     "subtitle": "Network exposure",
     "title": "Services"
   },

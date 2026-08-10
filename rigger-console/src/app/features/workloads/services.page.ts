@@ -3,7 +3,9 @@ import { TranslocoDirective } from '@jsverse/transloco';
 import { Observable } from 'rxjs';
 import { ResourceResponse } from '../../core/api.models';
 import { DataState } from '../../shared/data-state';
+import { ListToolbar } from '../../shared/list-toolbar';
 import { PageHeader } from '../../shared/page-header';
+import { RowAction, RowMenu } from '../../shared/row-menu';
 import { ResourceListPage } from './resource-page.base';
 
 interface ServicePort {
@@ -15,50 +17,58 @@ interface ServicePort {
 @Component({
   selector: 'r-services',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoDirective, PageHeader, DataState],
+  imports: [TranslocoDirective, PageHeader, DataState, ListToolbar, RowMenu],
   template: `
     <ng-container *transloco="let t">
       <r-page-header [title]="t('services.title')" [subtitle]="t('services.subtitle')">
       </r-page-header>
 
+      <r-list-toolbar
+        [(query)]="query"
+        [total]="items().length"
+        [shown]="visible().length"
+        [placeholder]="t('services.search')"
+      />
+
       <r-data-state
         [loading]="loading()"
         [error]="error() ? t(error()!) : null"
-        [empty]="!items().length"
-        [emptyMessage]="t('services.empty')"
+        [empty]="!visible().length"
+        [emptyMessage]="filteredOut() ? t('common.noMatches') : t('services.empty')"
         (retry)="load()"
       >
         <div class="surface table-wrap">
           <table class="data">
             <thead>
               <tr>
-                <th>{{ t('common.name') }}</th>
-                <th>{{ t('common.type') }}</th>
-                <th>{{ t('services.ports') }}</th>
-                <th>{{ t('common.appliedBy') }}</th>
-                <th class="text-right">{{ t('common.actions') }}</th>
+                <th class="sortable" [attr.aria-sort]="ariaSort('name')" (click)="sortBy('name')">
+                  {{ t('common.name') }}
+                </th>
+                <th class="sortable" [attr.aria-sort]="ariaSort('type')" (click)="sortBy('type')">
+                  {{ t('common.type') }}
+                </th>
+                <th class="sortable" [attr.aria-sort]="ariaSort('ports')" (click)="sortBy('ports')">
+                  {{ t('services.ports') }}
+                </th>
+                <th class="sortable" [attr.aria-sort]="ariaSort('appliedBy')" (click)="sortBy('appliedBy')">
+                  {{ t('common.appliedBy') }}
+                </th>
+                <th class="w-10"><span class="sr-only">{{ t('common.actions') }}</span></th>
               </tr>
             </thead>
             <tbody>
-              @for (item of items(); track item.name) {
+              @for (item of visible(); track item.name) {
                 <tr>
                   <td class="font-medium">{{ item.name }}</td>
                   <td class="muted">{{ type(item) }}</td>
                   <td class="tabular-nums">{{ ports(item) }}</td>
                   <td class="muted">{{ item.appliedBy || '—' }}</td>
-                  <td>
-                    <div class="flex justify-end">
-                      @if (canDelete()) {
-                        <button
-                          type="button"
-                          class="btn btn-danger py-1"
-                          [disabled]="busyItem() === item.name"
-                          (click)="confirming.set(item.name)"
-                        >
-                          {{ t('common.delete') }}
-                        </button>
-                      }
-                    </div>
+                  <td class="text-right">
+                    <r-row-menu
+                      [actions]="actionsFor()"
+                      [disabled]="busyItem() === item.name"
+                      (selected)="confirming.set(item.name)"
+                    />
                   </td>
                 </tr>
               }
@@ -97,6 +107,31 @@ export class ServicesPage extends ResourceListPage {
 
   protected fetch(namespace: string): Observable<ResourceResponse[]> {
     return this.api.services(namespace);
+  }
+
+  protected override searchText(item: ResourceResponse): string {
+    return `${super.searchText(item)} ${this.type(item)} ${this.ports(item)}`;
+  }
+
+  protected override sortValue(item: ResourceResponse, key: string): string | number | undefined {
+    switch (key) {
+      case 'type':  return this.type(item);
+      // First published port, so sorting groups by the port an operator would actually connect to.
+      case 'ports': return this.firstPort(item);
+      default:      return super.sortValue(item, key);
+    }
+  }
+
+  /** Undefined rather than 0 for a portless Service, so those sort last instead of first. */
+  private firstPort(item: ResourceResponse): number | undefined {
+    return (this.specValue<ServicePort[]>(item, 'ports') ?? [])[0]?.port;
+  }
+
+  /** Delete is the only action these kinds support today; the menu grows when the API does. */
+  actionsFor(): RowAction[] {
+    return this.canDelete()
+      ? [{ id: 'delete', labelKey: 'common.delete', icon: 'trash', danger: true }]
+      : [];
   }
 
   type(item: ResourceResponse): string {

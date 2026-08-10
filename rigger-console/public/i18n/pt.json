@@ -45,6 +45,7 @@
     "all": "Todos",
     "appliedBy": "Aplicado por",
     "cancel": "Cancelar",
+    "clear": "Limpar",
     "close": "Fechar",
     "confirm": "Confirmar",
     "created": "Criado",
@@ -59,6 +60,7 @@
     "namespace": "Namespace",
     "never": "Nunca",
     "no": "Não",
+    "noMatches": "Nada corresponde à pesquisa",
     "none": "Nenhum",
     "refresh": "Atualizar",
     "replicas": "Réplicas",
@@ -76,6 +78,7 @@
     "deleteConfirm": "Eliminar o ConfigMap {{name}}?",
     "empty": "Nenhum ConfigMap neste namespace",
     "keys": "Chaves",
+    "search": "Pesquisar por nome ou chave",
     "subtitle": "Configuração não sensível",
     "title": "ConfigMaps"
   },
@@ -107,6 +110,7 @@
     "scale": "Escalar",
     "scaleLabel": "Número de réplicas",
     "scaleTitle": "Escalar {{name}}",
+    "search": "Pesquisar por nome ou imagem",
     "subtitle": "Cargas de trabalho neste namespace",
     "title": "Deployments"
   },
@@ -218,6 +222,7 @@
     "deleteConfirm": "Eliminar o segredo {{name}}?",
     "empty": "Nenhum segredo neste namespace",
     "redacted": "oculto",
+    "search": "Pesquisar por nome",
     "subtitle": "Valores cifrados em repouso e nunca devolvidos pela API",
     "title": "Segredos"
   },
@@ -225,6 +230,7 @@
     "deleteConfirm": "Eliminar o serviço {{name}}?",
     "empty": "Nenhum serviço neste namespace",
     "ports": "Portas",
+    "search": "Pesquisar por nome ou porta",
     "subtitle": "Exposição de rede",
     "title": "Serviços"
   },

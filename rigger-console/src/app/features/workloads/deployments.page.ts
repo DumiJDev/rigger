@@ -4,13 +4,15 @@ import { TranslocoDirective } from '@jsverse/transloco';
 import { Observable, firstValueFrom } from 'rxjs';
 import { ResourceResponse } from '../../core/api.models';
 import { DataState } from '../../shared/data-state';
+import { ListToolbar } from '../../shared/list-toolbar';
 import { PageHeader } from '../../shared/page-header';
+import { RowAction, RowMenu } from '../../shared/row-menu';
 import { ResourceListPage } from './resource-page.base';
 
 @Component({
   selector: 'r-deployments',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoDirective, PageHeader, DataState, FormsModule],
+  imports: [TranslocoDirective, PageHeader, DataState, FormsModule, ListToolbar, RowMenu],
   templateUrl: './deployments.page.html',
 })
 export class DeploymentsPage extends ResourceListPage {
@@ -28,6 +30,39 @@ export class DeploymentsPage extends ResourceListPage {
 
   protected fetch(namespace: string): Observable<ResourceResponse[]> {
     return this.api.deployments(namespace);
+  }
+
+  /** Image is worth searching: "which of these runs nginx" is a question people actually ask. */
+  protected override searchText(item: ResourceResponse): string {
+    return `${super.searchText(item)} ${this.image(item)}`;
+  }
+
+  protected override sortValue(item: ResourceResponse, key: string): string | number | undefined {
+    switch (key) {
+      case 'image':    return this.image(item);
+      case 'replicas': return this.replicas(item);
+      // Boolean as a number, so sorting groups autoscaled Deployments together rather than
+      // ordering them by the rendered word, which changes with the locale.
+      case 'hpa':      return this.hasHpa(item) ? 1 : 0;
+      default:         return super.sortValue(item, key);
+    }
+  }
+
+  /** Built per row because the actions depend on the caller's permissions, which the base knows. */
+  actionsFor(item: ResourceResponse): RowAction[] {
+    const actions: RowAction[] = [];
+    if (this.auth.can('scale', 'Deployment')) {
+      actions.push({ id: 'scale', labelKey: 'deployments.scale', icon: 'scale' });
+    }
+    if (this.canDelete()) {
+      actions.push({ id: 'delete', labelKey: 'common.delete', icon: 'trash', danger: true });
+    }
+    return actions;
+  }
+
+  onAction(id: string, item: ResourceResponse): void {
+    if (id === 'scale') this.openScale(item);
+    if (id === 'delete') this.confirming.set(item.name);
   }
 
   replicas(item: ResourceResponse): number {
