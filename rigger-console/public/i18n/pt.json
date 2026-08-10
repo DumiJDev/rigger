@@ -18,7 +18,9 @@
     "audit": "Auditoria",
     "users": "Utilizadores",
     "apply": "Aplicar YAML",
-    "administration": "Administração"
+    "administration": "Administração",
+    "toggleSidebar": "Alternar navegação",
+    "provisioning": "Provisionamento"
   },
   "common": {
     "name": "Nome",
@@ -244,5 +246,15 @@
     "forbidden": "Não tem permissão para esta operação",
     "notFound": "Não encontrado",
     "network": "Não foi possível contactar o servidor"
+  },
+  "refresh": {
+    "off": "desligado",
+    "now": "Atualizar agora",
+    "interval": "Intervalo de atualização"
+  },
+  "density": {
+    "label": "Densidade",
+    "compact": "Compacto",
+    "comfortable": "Confortável"
   }
 }
