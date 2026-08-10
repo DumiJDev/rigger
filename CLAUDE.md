@@ -2,7 +2,7 @@
 
 Guidance for working in this repository. Rigger is a Docker Swarm operator that exposes
 Kubernetes-like primitives (Deployment, Service, ConfigMap, Secret, HPA) with RBAC, GitOps,
-and a React UI, built as a Java 21 / Spring Boot 3.3.5 Maven multi-module reactor.
+and a React UI, built as a Java 21+ / Spring Boot 4.1 Maven multi-module reactor.
 
 ## Module map
 
@@ -12,11 +12,11 @@ and a React UI, built as a Java 21 / Spring Boot 3.3.5 Maven multi-module reacto
 | `rigger-events` | Typed event records + `RiggerEventBus` (wraps Spring's `ApplicationEventPublisher`). |
 | `rigger-manifest` | Parses/validates `rigger.io/v1` YAML manifests (`ManifestParser`, `ManifestValidator`), plus `ComposeConverter` for docker-compose input (not yet wired into apply path — see Known Gaps). |
 | `rigger-schema` | JSON Schema (draft 2020-12) definitions per kind, validated via `ManifestSchemaValidator` before domain validation. Deliberately framework-free — `ManifestSchemaValidator` is registered as a Spring bean by `rigger-api`'s `ApiAutoConfiguration`, not annotated itself. |
-| `rigger-swarm-adapter` | Talks to Docker Swarm via **docker-java 3.3.6** (not raw HTTP). `ServiceAdapter`/`NodeAdapter`/`ConfigAdapter`/`SecretAdapter`. Contains a legacy hand-rolled `swarm/model/*` package predating the docker-java migration — still referenced by `ReconcilePlan` in `rigger-operator`; `DockerJavaReconcilePlan` is the real replacement (cleanup candidate, see Known Gaps). |
+| `rigger-swarm-adapter` | Talks to Docker Swarm via **docker-java 3.7.1** (not raw HTTP). `ServiceAdapter`/`NodeAdapter`/`ConfigAdapter`/`SecretAdapter`. Contains a legacy hand-rolled `swarm/model/*` package predating the docker-java migration — still referenced by `ReconcilePlan` in `rigger-operator`; `DockerJavaReconcilePlan` is the real replacement (cleanup candidate, see Known Gaps). |
 | `rigger-provisioner` | SSH-based cluster provisioning (Apache Mina SSHD) — Docker install, `docker swarm init/join`, `ClusterOrchestrator` for `cluster up`/`sync`. |
 | `rigger-security` | Auth (`UserStore`, `JwtTokenService`, `RiggerAuthenticationFilter`), RBAC (`RbacPolicyEngine`), secret encryption (`SecretEncryptor`, AES-256-GCM), audit (`AuditService`). |
 | `rigger-store` | Spring Data JPA + SQLite (WAL mode), Flyway migrations in `db/migration/`. |
-| `rigger-operator` | Reconciliation loop (virtual threads via `StructuredTaskScope`) running Deployment/Service/ConfigMap/Secret controllers in parallel each cycle, plus the HPA autoscaler. `SecretController` decrypts and pushes Secret values into Docker Secrets; create-only, same maturity as `ConfigMapController` (see Known Gaps). |
+| `rigger-operator` | Reconciliation loop (virtual threads via `Executors.newVirtualThreadPerTaskExecutor()`) running Deployment/Service/ConfigMap/Secret controllers in parallel each cycle, plus the HPA autoscaler. `SecretController` decrypts and pushes Secret values into Docker Secrets; create-only, same maturity as `ConfigMapController` (see Known Gaps). |
 | `rigger-gitops` | JGit-based poll-and-apply agent (`GitOpsAgent`), bypasses HTTP/RBAC by design (trusted internal path via `ManifestApplyService`). |
 | `rigger-api` | Spring MVC REST layer (`WorkloadController`, `ClusterController`, `AuthController`, `UserController`, `AuditController`). |
 | `rigger-cli` | `riggerctl` — Picocli-based CLI. |
@@ -25,16 +25,14 @@ and a React UI, built as a Java 21 / Spring Boot 3.3.5 Maven multi-module reacto
 
 ## Build & run
 
-### Java version — important
+### Java version
 
-The project **requires JDK 21** with `--enable-preview` (uses `StructuredTaskScope`, a JDK 21
-preview API, in `rigger-operator`'s `ReconciliationLoop`). If your default JDK is newer (e.g. 24/25),
-preview class files from a different major version will fail to load. Point `JAVA_HOME` at a JDK 21
-install for every Maven invocation:
-
-```bash
-export JAVA_HOME=/path/to/jdk-21
-```
+Builds on **any JDK 21+** — no `--enable-preview`, no pinned `JAVA_HOME`. `ReconciliationLoop`
+used to run its controllers via `StructuredTaskScope` (a JDK 21 *preview* API), which forced
+`--enable-preview` and broke outright whenever the machine's default JDK moved on (preview class
+files are tied to one specific major version). It now uses
+`Executors.newVirtualThreadPerTaskExecutor()` + `invokeAll` — same virtual-threads-in-parallel
+behaviour, no preview surface. Don't reintroduce preview APIs without a deliberate decision.
 
 The root `pom.xml`'s `maven-compiler-plugin` also sets `<parameters>true</parameters>` — required
 for Spring MVC's implicit `@PathVariable`/`@RequestParam` name binding (e.g.
@@ -62,7 +60,7 @@ keytool -genkeypair -alias rigger -keyalg RSA -keysize 2048 -storetype PKCS12 \
 
 cd rigger-server
 RIGGER_ATTACH_EXISTING_SWARM=true \
-mvn spring-boot:run -Dspring-boot.run.jvmArguments="--enable-preview"
+mvn spring-boot:run
 ```
 
 Server comes up on `https://localhost:7433`. First boot auto-generates `RIGGER_MASTER_KEY`
@@ -102,6 +100,17 @@ Follow `QUICK-START.md` for the full CLI flow (`riggerctl init --insecure` → `
   Secret via `SecretAdapter` (Swarm needs the actual usable value — it has its own independent
   at-rest encryption, unrelated to Rigger's). Audit log entries for Secret applies record
   `"<redacted-secret-data>"` instead of the spec JSON, encrypted or not.
+- **Spring Boot 4 / Jackson**: on Boot 4, `spring-boot-starter-jackson` still ships **Jackson 2**
+  (`com.fasterxml.jackson`, 2.21.x) — that's what Spring MVC serialises with, so the `@JsonProperty`
+  annotations on the domain records stay as-is. Jackson 3 (`tools.jackson`, 3.x) is also on the
+  classpath, pulled in transitively by Flyway 13 for its own internal use; the two coexist because
+  they occupy different package namespaces. Don't "modernise" the domain records to `tools.jackson`
+  imports — that would silently detach them from the converter Spring actually uses.
+- **Flyway needs the Boot starter, not just `flyway-core`**: Boot 4 moved Flyway auto-configuration
+  out of `spring-boot-autoconfigure` into a dedicated module, so `rigger-server` depends on
+  `spring-boot-starter-flyway`. With bare `flyway-core` the migrations silently never run and
+  startup then dies on Hibernate schema validation (`missing table [audit_log]`) against an empty
+  database — a confusing failure that points at JPA rather than the real cause.
 - **Database**: SQLite via Spring Data JPA + Flyway, WAL mode. Hibernate needs
   `org.hibernate.community.dialect.SQLiteDialect` (from `hibernate-community-dialects`,
   added to `rigger-server`'s pom) since SQLite has no first-party Hibernate dialect.

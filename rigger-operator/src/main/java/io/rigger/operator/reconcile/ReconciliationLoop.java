@@ -8,13 +8,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
 
 /**
  * The central reconciliation loop.
  *
  * <p>Runs every 15 seconds (configurable via {@code rigger.operator.reconcile-interval-seconds}).
- * Uses a structured scope to run all controllers concurrently via Virtual Threads,
- * with a shared shutdown policy if any controller throws.
+ * Runs all controllers concurrently on virtual threads, one per controller, and waits for the
+ * whole batch before reporting the cycle.
  *
  * <p>Each cycle:
  * <ol>
@@ -58,21 +61,20 @@ public class ReconciliationLoop {
         int totalChanges = 0;
         int errors = 0;
 
-        // Run controllers — each catches its own exceptions internally
-        // Virtual Threads used here so each controller can block on I/O concurrently
-        try (var scope = new java.util.concurrent.StructuredTaskScope.ShutdownOnFailure()) {
-            var deployFuture = scope.fork(() -> runController("Deployment", deploymentCtrl::reconcile));
-            var svcFuture    = scope.fork(() -> runController("Service",    serviceCtrl::reconcile));
-            var cfgFuture    = scope.fork(() -> runController("ConfigMap",  configMapCtrl::reconcile));
-            var secretFuture = scope.fork(() -> runController("Secret",     secretCtrl::reconcile));
+        // One virtual thread per controller so each can block on Docker I/O concurrently.
+        // runController swallows and logs each controller's own failures, so a single bad
+        // controller degrades to "0 changes" rather than aborting the cycle — which is why a
+        // plain invokeAll is enough here and no shared cancellation policy is needed.
+        List<Callable<Integer>> tasks = List.of(
+            () -> runController("Deployment", deploymentCtrl::reconcile),
+            () -> runController("Service",    serviceCtrl::reconcile),
+            () -> runController("ConfigMap",  configMapCtrl::reconcile),
+            () -> runController("Secret",     secretCtrl::reconcile));
 
-            scope.join();
-            // Collect results — individual failures are already logged inside runController
-            totalChanges += deployFuture.get();
-            totalChanges += svcFuture.get();
-            totalChanges += cfgFuture.get();
-            totalChanges += secretFuture.get();
-
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (var future : executor.invokeAll(tasks)) {
+                totalChanges += future.get();
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.error("Reconciliation cycle interrupted");

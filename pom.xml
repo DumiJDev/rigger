@@ -33,24 +33,20 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <spring-boot.version>3.5.15</spring-boot.version>
-        <sqlite-jdbc.version>3.46.1.3</sqlite-jdbc.version>
-        <flyway.version>10.20.1</flyway.version>
-        <jackson.version>2.18.0</jackson.version>
-        <snakeyaml.version>2.3</snakeyaml.version>
-        <mina-sshd.version>2.13.2</mina-sshd.version>
+        <!-- Spring Boot 4 (Framework 7 / Security 7). Brings Jackson 3, whose databind moved from
+             com.fasterxml.jackson.databind to tools.jackson.databind — the annotations
+             (com.fasterxml.jackson.annotation.*) are unchanged, so the domain records keep their
+             @JsonProperty imports. -->
+        <spring-boot.version>4.1.0</spring-boot.version>
+        <sqlite-jdbc.version>3.51.1.0</sqlite-jdbc.version>
+        <flyway.version>13.2.0</flyway.version>
+        <mina-sshd.version>2.16.0</mina-sshd.version>
         <okhttp.version>4.12.0</okhttp.version>
-        <picocli.version>4.7.6</picocli.version>
-        <lombok.version>1.18.34</lombok.version>
-        <junit.version>5.11.3</junit.version>
-        <mockito.version>5.14.2</mockito.version>
-        <testcontainers.version>1.20.3</testcontainers.version>
-        <awaitility.version>4.2.2</awaitility.version>
-        <wiremock.version>3.9.2</wiremock.version>
-        <jjwt.version>0.12.6</jjwt.version>
-        <json-schema-validator.version>1.5.1</json-schema-validator.version>
-        <jgit.version>6.10.0.202406032230-r</jgit.version>
-        <mockwebserver.version>4.12.0</mockwebserver.version>
+        <picocli.version>4.7.7</picocli.version>
+        <lombok.version>1.18.42</lombok.version>
+        <jjwt.version>0.13.0</jjwt.version>
+        <json-schema-validator.version>1.5.9</json-schema-validator.version>
+        <jgit.version>7.5.0.202511071551-r</jgit.version>
         <maven-shade.version>3.6.0</maven-shade.version>
         <!-- docker-java 3.3.6 was built/tested against httpclient5 5.0.3, but Spring Boot's own
              BOM manages a much newer httpclient5 (5.5.x) that Spring's HTTP client
@@ -140,31 +136,8 @@
                 <artifactId>flyway-core</artifactId>
                 <version>${flyway.version}</version>
             </dependency>
-            <dependency>
-                <groupId>com.fasterxml.jackson.core</groupId>
-                <artifactId>jackson-core</artifactId>
-                <version>${jackson.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.fasterxml.jackson.core</groupId>
-                <artifactId>jackson-annotations</artifactId>
-                <version>${jackson.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.fasterxml.jackson.core</groupId>
-                <artifactId>jackson-databind</artifactId>
-                <version>${jackson.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.fasterxml.jackson.dataformat</groupId>
-                <artifactId>jackson-dataformat-yaml</artifactId>
-                <version>${jackson.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.fasterxml.jackson.datatype</groupId>
-                <artifactId>jackson-datatype-jsr310</artifactId>
-                <version>${jackson.version}</version>
-            </dependency>
+            <!-- Jackson versions come from the Spring Boot BOM (Jackson 3 under Boot 4);
+                 pinning them here would fight the BOM and risk a databind/annotations split. -->
             <dependency>
                 <groupId>org.apache.sshd</groupId>
                 <artifactId>sshd-core</artifactId>
@@ -191,43 +164,10 @@
                 <version>${lombok.version}</version>
                 <scope>provided</scope>
             </dependency>
-            <dependency>
-                <groupId>org.junit.jupiter</groupId>
-                <artifactId>junit-jupiter</artifactId>
-                <version>${junit.version}</version>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
-                <groupId>org.mockito</groupId>
-                <artifactId>mockito-core</artifactId>
-                <version>${mockito.version}</version>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
-                <groupId>org.mockito</groupId>
-                <artifactId>mockito-junit-jupiter</artifactId>
-                <version>${mockito.version}</version>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
-                <groupId>org.testcontainers</groupId>
-                <artifactId>testcontainers-bom</artifactId>
-                <version>${testcontainers.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <dependency>
-                <groupId>org.awaitility</groupId>
-                <artifactId>awaitility</artifactId>
-                <version>${awaitility.version}</version>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
-                <groupId>org.wiremock</groupId>
-                <artifactId>wiremock</artifactId>
-                <version>${wiremock.version}</version>
-                <scope>test</scope>
-            </dependency>
+            <!-- JUnit, Mockito and Awaitility are managed by the imported Spring Boot BOM and are
+                 deliberately not re-declared here: a versionless entry in this block shadows the
+                 BOM's own entry instead of inheriting it, which breaks every module's test scope.
+                 Testcontainers and WireMock used to be declared here but no module ever used them. -->
         </dependencies>
     </dependencyManagement>
 
@@ -247,16 +187,12 @@
                         <source>21</source>
                         <target>21</target>
                         <parameters>true</parameters>
-                        <compilerArgs><arg>--enable-preview</arg></compilerArgs>
                     </configuration>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.5.1</version>
-                    <configuration>
-                        <argLine>--enable-preview</argLine>
-                    </configuration>
+                    <version>3.5.4</version>
                 </plugin>
             </plugins>
         </pluginManagement>
