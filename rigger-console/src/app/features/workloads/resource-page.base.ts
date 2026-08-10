@@ -4,6 +4,7 @@ import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
 import { ResourceResponse } from '../../core/api.models';
 import { NamespaceService } from '../../core/namespace.service';
+import { RefreshService } from '../../core/refresh.service';
 
 /**
  * Shared loading/deleting behaviour for the four resource list pages, which differ only in which
@@ -16,6 +17,7 @@ import { NamespaceService } from '../../core/namespace.service';
 export abstract class ResourceListPage {
   protected readonly api = inject(ApiService);
   protected readonly ns = inject(NamespaceService);
+  protected readonly refresh = inject(RefreshService);
   readonly auth = inject(AuthService);
 
   readonly loading = signal(true);
@@ -29,9 +31,14 @@ export abstract class ResourceListPage {
   protected abstract readonly rbacKind: string;
   protected abstract fetch(namespace: string): Observable<ResourceResponse[]>;
 
+  /**
+   * Reloads when the namespace changes and on every auto-refresh tick. Both are read inside the
+   * same effect, so a page opts into the masthead's refresh interval by doing nothing at all.
+   */
   protected watchNamespace(): void {
     effect(() => {
       const namespace = this.ns.current();
+      this.refresh.tick();
       void this.load(namespace);
     });
   }

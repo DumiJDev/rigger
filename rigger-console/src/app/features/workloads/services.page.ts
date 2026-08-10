@@ -19,7 +19,6 @@ interface ServicePort {
   template: `
     <ng-container *transloco="let t">
       <r-page-header [title]="t('services.title')" [subtitle]="t('services.subtitle')">
-        <button type="button" class="btn btn-ghost" (click)="load()">{{ t('common.refresh') }}</button>
       </r-page-header>
 
       <r-data-state

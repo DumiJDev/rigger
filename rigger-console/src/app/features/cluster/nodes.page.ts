@@ -1,8 +1,9 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core';
 import { TranslocoDirective } from '@jsverse/transloco';
 import { firstValueFrom } from 'rxjs';
 import { ApiService } from '../../core/api.service';
+import { RefreshService } from '../../core/refresh.service';
 import { NodeResponse } from '../../core/api.models';
 import { DataState } from '../../shared/data-state';
 import { PageHeader } from '../../shared/page-header';
@@ -15,7 +16,6 @@ import { StatusBadge } from '../../shared/status-badge';
   template: `
     <ng-container *transloco="let t">
       <r-page-header [title]="t('nodes.title')" [subtitle]="t('nodes.subtitle')">
-        <button type="button" class="btn btn-ghost" (click)="load()">{{ t('common.refresh') }}</button>
       </r-page-header>
 
       <r-data-state
@@ -59,12 +59,18 @@ import { StatusBadge } from '../../shared/status-badge';
 })
 export class NodesPage {
   private readonly api = inject(ApiService);
+  private readonly refresh = inject(RefreshService);
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
   readonly nodes = signal<NodeResponse[]>([]);
 
   constructor() {
-    void this.load();
+    // Tracks the masthead's refresh tick, so this page follows the chosen interval without
+    // needing a Refresh button of its own.
+    effect(() => {
+      this.refresh.tick();
+      void this.load();
+    });
   }
 
   async load(): Promise<void> {

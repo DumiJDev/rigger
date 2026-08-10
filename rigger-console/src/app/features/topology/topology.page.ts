@@ -4,6 +4,7 @@ import { firstValueFrom } from 'rxjs';
 import { ApiService } from '../../core/api.service';
 import { Topology, TopologyEdge, TopologyNode } from '../../core/api.models';
 import { NamespaceService } from '../../core/namespace.service';
+import { RefreshService } from '../../core/refresh.service';
 import { DataState } from '../../shared/data-state';
 import { PageHeader } from '../../shared/page-header';
 import { StatusBadge } from '../../shared/status-badge';
@@ -42,6 +43,7 @@ const TOP = 48;
 export class TopologyPage {
   private readonly api = inject(ApiService);
   private readonly ns = inject(NamespaceService);
+  private readonly refresh = inject(RefreshService);
 
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
@@ -88,6 +90,7 @@ export class TopologyPage {
   constructor() {
     effect(() => {
       const namespace = this.ns.current();
+      this.refresh.tick();
       void this.load(namespace);
     });
   }
