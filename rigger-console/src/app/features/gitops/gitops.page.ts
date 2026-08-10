@@ -1,9 +1,10 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { TranslocoDirective, TranslocoService } from '@jsverse/transloco';
 import { firstValueFrom } from 'rxjs';
 import { ApiService } from '../../core/api.service';
+import { RefreshService } from '../../core/refresh.service';
 import { AuthService } from '../../core/auth.service';
 import { GitOpsConfig, GitOpsState } from '../../core/api.models';
 import { PageHeader } from '../../shared/page-header';
@@ -17,6 +18,7 @@ import { StatusBadge } from '../../shared/status-badge';
 })
 export class GitOpsPage {
   private readonly api = inject(ApiService);
+  private readonly refresh = inject(RefreshService);
   private readonly transloco = inject(TranslocoService);
   readonly auth = inject(AuthService);
 
@@ -32,7 +34,12 @@ export class GitOpsPage {
   manifestPathsText = '';
 
   constructor() {
-    void this.load();
+    // Tracks the masthead's refresh tick, so this page follows the chosen interval without
+    // needing a Refresh button of its own.
+    effect(() => {
+      this.refresh.tick();
+      void this.load();
+    });
   }
 
   async load(): Promise<void> {

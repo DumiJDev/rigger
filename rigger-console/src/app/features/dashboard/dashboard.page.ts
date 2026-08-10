@@ -7,6 +7,7 @@ import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
 import { ClusterMetrics, EventResponse, Topology } from '../../core/api.models';
 import { NamespaceService } from '../../core/namespace.service';
+import { RefreshService } from '../../core/refresh.service';
 import { DataState } from '../../shared/data-state';
 import { PageHeader } from '../../shared/page-header';
 import { StatusBadge } from '../../shared/status-badge';
@@ -20,6 +21,7 @@ import { StatusBadge } from '../../shared/status-badge';
 export class DashboardPage {
   private readonly api = inject(ApiService);
   private readonly ns = inject(NamespaceService);
+  private readonly refresh = inject(RefreshService);
   readonly auth = inject(AuthService);
 
   readonly loading = signal(true);
@@ -32,6 +34,7 @@ export class DashboardPage {
     // Reloads whenever the namespace changes — the workload half of this page is namespaced.
     effect(() => {
       const namespace = this.ns.current();
+      this.refresh.tick();
       void this.load(namespace);
     });
   }

@@ -18,7 +18,7 @@ export type IconName =
   | 'server' | 'settings' | 'git' | 'clipboard' | 'users' | 'file-code'
   // controls
   | 'search' | 'filter' | 'more' | 'chevron-down' | 'chevron-right' | 'chevron-left'
-  | 'refresh' | 'rows' | 'sun' | 'moon' | 'monitor' | 'globe' | 'log-out'
+  | 'refresh' | 'rows' | 'sidebar' | 'sun' | 'moon' | 'monitor' | 'globe' | 'log-out'
   | 'x' | 'check' | 'alert' | 'play' | 'pause' | 'trash' | 'scale' | 'plus' | 'copy';
 
 /**
@@ -60,6 +60,7 @@ const PATHS: Record<IconName, string> = {
   'chevron-left': 'M15 18l-6-6 6-6',
   refresh: 'M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5',
   rows: 'M3 5h18M3 12h18M3 19h18',
+  sidebar: 'M3 3h18a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 3v18',
   sun: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4',
   moon: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z',
   monitor: 'M3 3h18a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM8 21h8M12 17v4',

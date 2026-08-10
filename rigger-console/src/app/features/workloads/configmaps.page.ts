@@ -13,7 +13,6 @@ import { ResourceListPage } from './resource-page.base';
   template: `
     <ng-container *transloco="let t">
       <r-page-header [title]="t('configmaps.title')" [subtitle]="t('configmaps.subtitle')">
-        <button type="button" class="btn btn-ghost" (click)="load()">{{ t('common.refresh') }}</button>
       </r-page-header>
 
       <r-data-state
