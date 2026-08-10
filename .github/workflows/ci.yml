@@ -316,6 +316,31 @@ jobs:
                  -d '{"manifest":"apiVersion: rigger.io/v1\nkind: ConfigMap\nmetadata:\n  name: ci-nodry\n  namespace: default\nspec:\n  data:\n    K: \"v\"\n"}')"
           exit $fail
 
+      # Node reads used to come only from cluster_nodes, which just the SSH provisioning path writes.
+      # So an attached Swarm — the documented dev setup, and this job's setup — reported zero nodes
+      # on the Nodes page, the dashboard and the cluster status, while docker node ls showed a
+      # healthy leader. CI could not have caught it: its assertion was only "the nodes page renders".
+      - name: Cluster nodes come from Swarm, not just the provisioning table
+        run: |
+          set -e
+          T=$(cat /tmp/token)
+          fail=0
+          swarm_nodes=$(docker node ls --format '{{.Hostname}}' | wc -l)
+          api=$(curl -sk -H "Authorization: Bearer $T" https://localhost:7433/api/v1/cluster/nodes)
+          echo "swarm reports $swarm_nodes node(s); api returned: $api"
+          reported=$(printf '%s' "$api" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')
+          [ "$reported" = "$swarm_nodes" ] || { echo "api listed $reported of $swarm_nodes nodes"; fail=1; }
+          # A node listed but with an empty hostname or an OFFLINE status would still pass a count
+          # check, so each field the Nodes page shows is asserted on its own.
+          fields=$(printf '%s' "$api" | python3 -c 'import sys,json;n=json.load(sys.stdin)[0];print(bool(n["name"]),n["status"],n["role"],bool(n["swarmNodeId"]))')
+          echo "node fields: $fields"
+          [ "$fields" = "True ACTIVE MANAGER True" ] || { echo "node fields wrong"; fail=1; }
+          status=$(curl -sk -H "Authorization: Bearer $T" https://localhost:7433/api/v1/cluster \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["status"],d["activeNodes"],d["totalNodes"])')
+          echo "cluster status: $status"
+          [ "$status" = "healthy 1 1" ] || { echo "cluster reported '$status'"; fail=1; }
+          exit $fail
+
       # The sampler is the only thing that makes the console's charts survive a reload, and it fails
       # silently: an empty series and a broken sampler look identical from the outside.
       - name: Metrics series is recorded and scoped

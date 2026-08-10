@@ -56,10 +56,21 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
   `,
 })
 export class Sparkline {
-  readonly points = input<number[]>([]);
+  /**
+   * Points as `[epochMillis, value]`. Timestamps rather than a bare value array because sampling is
+   * not evenly spaced — a round costs a round-trip to the Docker Engine, so the interval drifts, and
+   * a server restart leaves a real gap. Plotted by index those irregularities vanish and the chart
+   * quietly claims a regularity the data does not have.
+   */
+  readonly points = input<[number, number][]>([]);
   readonly height = input(28);
   readonly color = input('var(--color-brand-500)');
-  readonly fill = input(true);
+  /**
+   * Off by default. These series are mostly flat operational counts, and an area under a flat line
+   * is a filled rectangle — it draws far more attention than the number it sits beneath, which is
+   * the wrong way round on a KPI panel.
+   */
+  readonly fill = input(false);
   readonly emptyLabel = input('');
 
   /**
@@ -68,24 +79,31 @@ export class Sparkline {
    * that does go negative gets a min-based scale, since zero is no longer the floor.
    */
   private readonly bounds = computed(() => {
-    const values = this.points();
+    const values = this.points().map((p) => p[1]);
     const max = Math.max(...values);
     const min = Math.min(...values);
     const lo = min < 0 ? min : 0;
     // A constant series has zero range; any positive span keeps it a flat line rather than NaN.
-    const hi = max > lo ? max : lo + 1;
-    return { lo, hi };
+    const top = max > lo ? max : lo + 1;
+    // Headroom above the maximum, so a steady value sits inside the box instead of being welded to
+    // its top edge — pinned there it read as "at the limit", and its area fill became a solid
+    // rectangle filling the whole panel rather than a shape.
+    return { lo, hi: lo + (top - lo) / 0.85 };
   });
 
   private readonly coords = computed(() => {
-    const values = this.points();
+    const pts = this.points();
     const { lo, hi } = this.bounds();
     const h = this.height();
     // Inset by the stroke radius so the line is not clipped at the extremes.
     const pad = 2;
     const span = h - pad * 2;
-    return values.map((v, i) => ({
-      x: values.length === 1 ? 0 : (i / (values.length - 1)) * 100,
+    const t0 = pts[0][0];
+    const t1 = pts[pts.length - 1][0];
+    // Every point sharing one timestamp would divide by zero; fall back to even spacing there.
+    const dt = t1 - t0;
+    return pts.map(([t, v], i) => ({
+      x: dt > 0 ? ((t - t0) / dt) * 100 : (i / Math.max(1, pts.length - 1)) * 100,
       y: pad + (1 - (v - lo) / (hi - lo)) * span,
     }));
   });

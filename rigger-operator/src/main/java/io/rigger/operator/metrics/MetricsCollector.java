@@ -3,9 +3,7 @@ package io.rigger.operator.metrics;
 import com.github.dockerjava.api.model.Service;
 import com.github.dockerjava.api.model.TaskState;
 import io.rigger.operator.autoscaler.MetricsSource;
-import io.rigger.store.repository.NodeRepository;
 import io.rigger.store.repository.ResourceRepository;
-import io.rigger.core.domain.cluster.NodeStatus;
 import io.rigger.swarm.adapter.ServiceAdapter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,19 +26,20 @@ public class MetricsCollector {
     private static final Logger log = LoggerFactory.getLogger(MetricsCollector.class);
 
     private final ResourceRepository store;
-    private final NodeRepository     nodeRepo;
+    private final NodeInventory      nodeInventory;
     private final ServiceAdapter     swarm;
     private final MetricsSource      metrics;
 
-    public MetricsCollector(ResourceRepository store, NodeRepository nodeRepo,
+    public MetricsCollector(ResourceRepository store, NodeInventory nodeInventory,
                             ServiceAdapter swarm, MetricsSource metrics) {
-        this.store = store; this.nodeRepo = nodeRepo; this.swarm = swarm; this.metrics = metrics;
+        this.store = store; this.nodeInventory = nodeInventory; this.swarm = swarm; this.metrics = metrics;
     }
 
     /** Cluster-wide totals: node health, Swarm replica counts, and stored resource counts by kind. */
     public ClusterSnapshot cluster() {
-        long active = nodeRepo.findByStatus(NodeStatus.ACTIVE).size();
-        long total  = nodeRepo.count();
+        // Node counts come from Swarm via NodeInventory, not from the store: the store only holds
+        // nodes that Rigger provisioned over SSH, so an attached Swarm reported 0/0 nodes.
+        var nodes = nodeInventory.counts();
 
         int managedServices = 0, running = 0, desired = 0;
         try {
@@ -54,7 +53,7 @@ public class MetricsCollector {
             log.debug("Swarm totals unavailable: {}", e.getMessage());
         }
 
-        return new ClusterSnapshot(active, total, managedServices, running, desired,
+        return new ClusterSnapshot(nodes.active(), nodes.total(), managedServices, running, desired,
             store.findAllByKind("Deployment").size(),
             store.findAllByKind("Service").size(),
             store.findAllByKind("ConfigMap").size(),
