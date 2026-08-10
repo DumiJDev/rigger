@@ -1,0 +1,134 @@
+<ng-container *transloco="let t">
+  <r-page-header [title]="t('users.title')" [subtitle]="t('users.subtitle')">
+    <button type="button" class="btn btn-ghost" (click)="load()">{{ t('common.refresh') }}</button>
+    <button type="button" class="btn btn-primary" (click)="creating.set(true)">
+      {{ t('users.create') }}
+    </button>
+  </r-page-header>
+
+  @if (message(); as msg) {
+    <p
+      class="mb-4 rounded-lg px-3 py-2 text-sm"
+      [style.background-color]="
+        failed()
+          ? 'color-mix(in oklch, var(--color-error) 12%, transparent)'
+          : 'color-mix(in oklch, var(--color-ok) 12%, transparent)'
+      "
+      [style.color]="failed() ? 'var(--color-error)' : 'var(--color-ok)'"
+    >
+      {{ msg }}
+    </p>
+  }
+
+  <r-data-state
+    [loading]="loading()"
+    [error]="error() ? t(error()!) : null"
+    [empty]="!users().length"
+    [emptyMessage]="t('users.empty')"
+    (retry)="load()"
+  >
+    <div class="surface table-wrap">
+      <table class="data">
+        <thead>
+          <tr>
+            <th>{{ t('users.username') }}</th>
+            <th>{{ t('users.role') }}</th>
+            <th>{{ t('common.namespace') }}</th>
+            <th>{{ t('users.active') }}</th>
+            <th class="text-right">{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (u of users(); track u.username) {
+            <tr>
+              <td class="font-medium">{{ u.username }}</td>
+              <td>{{ u.role }}</td>
+              <td class="muted">{{ u.namespace || t('user.allNamespaces') }}</td>
+              <td>{{ u.active ? t('common.yes') : t('common.no') }}</td>
+              <td>
+                <div class="flex justify-end">
+                  <!-- Deleting your own account would lock you out of the console mid-session. -->
+                  <button
+                    type="button"
+                    class="btn btn-danger py-1"
+                    [disabled]="busy() || isSelf(u.username)"
+                    (click)="confirming.set(u.username)"
+                  >
+                    {{ t('common.delete') }}
+                  </button>
+                </div>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  </r-data-state>
+
+  @if (creating()) {
+    <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="creating.set(false)">
+      <div class="surface w-full max-w-md p-5" (click)="$event.stopPropagation()">
+        <h2 class="text-base font-semibold">{{ t('users.create') }}</h2>
+        <div class="mt-4 space-y-4">
+          <div>
+            <label class="mb-1.5 block text-sm font-medium" for="u-name">
+              {{ t('users.username') }}
+            </label>
+            <input id="u-name" class="input" [(ngModel)]="form.username" [disabled]="busy()" />
+          </div>
+          <div>
+            <label class="mb-1.5 block text-sm font-medium" for="u-pass">
+              {{ t('users.password') }}
+            </label>
+            <input
+              id="u-pass"
+              type="password"
+              class="input"
+              autocomplete="new-password"
+              [(ngModel)]="form.password"
+              [disabled]="busy()"
+            />
+          </div>
+          <div>
+            <label class="mb-1.5 block text-sm font-medium" for="u-role">{{ t('users.role') }}</label>
+            <select id="u-role" class="input" [(ngModel)]="form.role" [disabled]="busy()">
+              @for (r of roles; track r) {
+                <option [value]="r">{{ r }}</option>
+              }
+            </select>
+          </div>
+          <div>
+            <label class="mb-1.5 block text-sm font-medium" for="u-ns">
+              {{ t('users.namespaceScope') }}
+            </label>
+            <input id="u-ns" class="input" [(ngModel)]="form.namespace" [disabled]="busy()" />
+          </div>
+        </div>
+        <div class="mt-5 flex justify-end gap-2">
+          <button type="button" class="btn btn-ghost" (click)="creating.set(false)">
+            {{ t('common.cancel') }}
+          </button>
+          <button type="button" class="btn btn-primary" [disabled]="busy()" (click)="create()">
+            {{ t('common.save') }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  @if (confirming(); as name) {
+    <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="confirming.set(null)">
+      <div class="surface w-full max-w-sm p-5" (click)="$event.stopPropagation()">
+        <p class="text-sm">{{ t('users.deleteConfirm', { name }) }}</p>
+        <div class="mt-5 flex justify-end gap-2">
+          <button type="button" class="btn btn-ghost" (click)="confirming.set(null)">
+            {{ t('common.cancel') }}
+          </button>
+          <button type="button" class="btn btn-danger" (click)="remove(name)">
+            {{ t('common.delete') }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+</ng-container>

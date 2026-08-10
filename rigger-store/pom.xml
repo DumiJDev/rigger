@@ -13,6 +13,9 @@
     <description>State persistence layer. SQLite by default, PostgreSQL for HA. Schema managed by Flyway.</description>
     <dependencies>
         <dependency><groupId>io.rigger</groupId><artifactId>rigger-core</artifactId></dependency>
+        <!-- For EventPersistenceListener: it listens to the in-memory event bus and writes rows.
+             No cycle — rigger-events only depends on rigger-core. -->
+        <dependency><groupId>io.rigger</groupId><artifactId>rigger-events</artifactId></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-jpa</artifactId></dependency>
         <dependency><groupId>org.xerial</groupId><artifactId>sqlite-jdbc</artifactId></dependency>
         <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>

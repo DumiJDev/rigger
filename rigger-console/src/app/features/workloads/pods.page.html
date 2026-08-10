@@ -1,0 +1,115 @@
+<ng-container *transloco="let t">
+  <r-page-header [title]="t('pods.title')" [subtitle]="t('pods.subtitle')">
+    <button type="button" class="btn btn-ghost" (click)="load()">{{ t('common.refresh') }}</button>
+  </r-page-header>
+
+  <r-data-state
+    [loading]="loading()"
+    [error]="error() ? t(error()!) : null"
+    [empty]="!pods().length"
+    [emptyMessage]="t('pods.empty')"
+    (retry)="load()"
+  >
+    <div class="surface table-wrap">
+      <table class="data">
+        <thead>
+          <tr>
+            <th>{{ t('common.name') }}</th>
+            <th>{{ t('nav.deployments') }}</th>
+            <th>{{ t('common.image') }}</th>
+            <th>{{ t('pods.node') }}</th>
+            <th>{{ t('pods.state') }}</th>
+            <th class="text-right">{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (pod of pods(); track pod.name) {
+            <tr>
+              <td class="font-mono text-xs">{{ pod.name }}</td>
+              <td>{{ pod.deployment || '—' }}</td>
+              <td class="muted">{{ pod.image || '—' }}</td>
+              <td class="muted">{{ pod.node || '—' }}</td>
+              <td>
+                @if (pod.state) {
+                  <r-status-badge [status]="pod.state" [label]="pod.state" />
+                } @else {
+                  <span class="muted">—</span>
+                }
+              </td>
+              <td>
+                <div class="flex justify-end">
+                  @if (auth.can('logs', 'Pod')) {
+                    <button type="button" class="btn btn-ghost py-1" (click)="openLogs(pod)">
+                      {{ t('pods.logs') }}
+                    </button>
+                  }
+                </div>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  </r-data-state>
+
+  <!-- Log viewer -->
+  @if (viewing(); as pod) {
+    <div class="fixed inset-0 z-30 flex items-stretch justify-end bg-black/40" (click)="closeLogs()">
+      <div
+        class="flex h-full w-full max-w-4xl flex-col border-l"
+        style="border-color: var(--border-subtle); background-color: var(--surface-raised)"
+        (click)="$event.stopPropagation()"
+      >
+        <header
+          class="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-3"
+          style="border-color: var(--border-subtle)"
+        >
+          <h2 class="mr-auto truncate text-sm font-semibold">
+            {{ t('logs.title', { pod: pod.name }) }}
+          </h2>
+
+          <input
+            class="input w-auto min-w-40 py-1.5"
+            [placeholder]="t('logs.filter')"
+            [(ngModel)]="filter"
+            (ngModelChange)="onFilterChange($event)"
+          />
+
+          @if (streaming()) {
+            <button type="button" class="btn btn-ghost py-1.5" (click)="pauseLogs()">
+              {{ t('logs.pause') }}
+            </button>
+          } @else {
+            <button type="button" class="btn btn-ghost py-1.5" (click)="openLogs(pod)">
+              {{ t('logs.follow') }}
+            </button>
+          }
+          <button type="button" class="btn btn-ghost py-1.5" (click)="lines.set([])">
+            {{ t('logs.clear') }}
+          </button>
+          <button type="button" class="btn btn-ghost py-1.5" (click)="closeLogs()">
+            {{ t('common.close') }}
+          </button>
+        </header>
+
+        <div
+          class="flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed"
+          style="background-color: var(--surface-sunken)"
+        >
+          @if (logError()) {
+            <p style="color: var(--color-error)">{{ t('logs.failed') }}: {{ logError() }}</p>
+          } @else if (!visibleLines().length) {
+            <p class="muted">{{ t('logs.waiting') }}</p>
+          } @else {
+            @for (line of visibleLines(); track $index) {
+              <div class="whitespace-pre-wrap break-all">{{ line }}</div>
+            }
+          }
+          @if (ended() && !logError()) {
+            <p class="muted mt-3">— {{ t('logs.ended') }} —</p>
+          }
+        </div>
+      </div>
+    </div>
+  }
+</ng-container>

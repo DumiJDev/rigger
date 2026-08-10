@@ -1,0 +1,176 @@
+<ng-container *transloco="let t">
+  <r-page-header [title]="t('gitops.title')" [subtitle]="t('gitops.subtitle')">
+    <button type="button" class="btn btn-ghost" (click)="load()">{{ t('common.refresh') }}</button>
+  </r-page-header>
+
+  @if (loading()) {
+    <div class="surface px-4 py-8">
+      <span class="muted text-sm">{{ t('common.loading') }}</span>
+    </div>
+  } @else {
+    <div class="grid gap-4 lg:grid-cols-5">
+      <!-- Current state -->
+      <section class="surface p-4 lg:col-span-2">
+        <h2 class="text-sm font-semibold">{{ t('gitops.state') }}</h2>
+
+        @if (state(); as s) {
+          <dl class="mt-4 space-y-3 text-sm">
+            <div class="flex items-start justify-between gap-2">
+              <dt class="muted shrink-0">{{ t('gitops.repository') }}</dt>
+              <dd class="truncate text-right font-mono text-xs">{{ s.repositoryUrl }}</dd>
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <dt class="muted">{{ t('gitops.branch') }}</dt>
+              <dd>{{ s.branch }}</dd>
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <dt class="muted">{{ t('gitops.result') }}</dt>
+              <dd>
+                @if (s.result === 'PENDING') {
+                  <span class="muted">{{ t('gitops.pending') }}</span>
+                } @else {
+                  <r-status-badge [status]="s.result" [label]="s.result" />
+                }
+              </dd>
+            </div>
+            <div class="flex items-start justify-between gap-2">
+              <dt class="muted shrink-0">{{ t('gitops.lastCommit') }}</dt>
+              <dd class="truncate text-right font-mono text-xs">
+                {{ s.lastAppliedCommit ? s.lastAppliedCommit.slice(0, 10) : '—' }}
+              </dd>
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <dt class="muted">{{ t('gitops.lastSync') }}</dt>
+              <dd>{{ s.lastAppliedAt ? (s.lastAppliedAt | date: 'short') : t('common.never') }}</dd>
+            </div>
+          </dl>
+
+          @if (s.errorMessage) {
+            <p
+              class="mt-4 rounded-lg px-3 py-2 text-xs"
+              style="background-color: color-mix(in oklch, var(--color-error) 12%, transparent); color: var(--color-error)"
+            >
+              {{ s.errorMessage }}
+            </p>
+          }
+        } @else {
+          <p class="mt-4 text-sm font-medium">{{ t('gitops.disabled') }}</p>
+          <p class="muted mt-1 text-sm">{{ t('gitops.disabledHelp') }}</p>
+        }
+      </section>
+
+      <!-- Configuration -->
+      <section class="surface p-4 lg:col-span-3">
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-sm font-semibold">{{ t('gitops.config') }}</h2>
+          @if (config()?.source; as source) {
+            <span class="muted text-xs">
+              {{ t('gitops.source') }}:
+              {{ source === 'database' ? t('gitops.sourceDatabase') : t('gitops.sourceProperties') }}
+            </span>
+          }
+        </div>
+
+        @if (config()?.source === 'properties') {
+          <p class="muted mt-2 text-xs">{{ t('gitops.sourceHelp') }}</p>
+        }
+
+        <div class="mt-4 space-y-4">
+          <label class="flex cursor-pointer items-center gap-2 text-sm">
+            <input type="checkbox" [(ngModel)]="form.enabled" [disabled]="!canEdit() || saving()" />
+            {{ t('gitops.enabled') }}
+          </label>
+
+          <div>
+            <label class="mb-1.5 block text-sm font-medium" for="repo">
+              {{ t('gitops.repository') }}
+            </label>
+            <input
+              id="repo"
+              class="input font-mono text-xs"
+              placeholder="git@github.com:org/infra.git"
+              [(ngModel)]="form.repositoryUrl"
+              [disabled]="!canEdit() || saving()"
+            />
+          </div>
+
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label class="mb-1.5 block text-sm font-medium" for="branch">
+                {{ t('gitops.branch') }}
+              </label>
+              <input
+                id="branch"
+                class="input"
+                [(ngModel)]="form.branch"
+                [disabled]="!canEdit() || saving()"
+              />
+            </div>
+            <div>
+              <label class="mb-1.5 block text-sm font-medium" for="interval">
+                {{ t('gitops.pollInterval') }}
+              </label>
+              <input
+                id="interval"
+                type="number"
+                min="10"
+                class="input"
+                [(ngModel)]="form.pollIntervalSeconds"
+                [disabled]="!canEdit() || saving()"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label class="mb-1.5 block text-sm font-medium" for="key">
+              {{ t('gitops.sshKeyPath') }}
+            </label>
+            <input
+              id="key"
+              class="input font-mono text-xs"
+              placeholder="/etc/rigger/gitops-key"
+              [(ngModel)]="form.sshKeyPath"
+              [disabled]="!canEdit() || saving()"
+            />
+            <p class="muted mt-1 text-xs">{{ t('gitops.sshKeyHelp') }}</p>
+          </div>
+
+          <div>
+            <label class="mb-1.5 block text-sm font-medium" for="paths">
+              {{ t('gitops.manifestPaths') }}
+            </label>
+            <input
+              id="paths"
+              class="input font-mono text-xs"
+              placeholder="manifests/production/, manifests/staging/"
+              [(ngModel)]="manifestPathsText"
+              [disabled]="!canEdit() || saving()"
+            />
+          </div>
+
+          @if (message(); as msg) {
+            <p
+              class="rounded-lg px-3 py-2 text-sm"
+              [style.background-color]="
+                failed()
+                  ? 'color-mix(in oklch, var(--color-error) 12%, transparent)'
+                  : 'color-mix(in oklch, var(--color-ok) 12%, transparent)'
+              "
+              [style.color]="failed() ? 'var(--color-error)' : 'var(--color-ok)'"
+            >
+              {{ msg }}
+            </p>
+          }
+
+          @if (canEdit()) {
+            <div class="flex justify-end">
+              <button type="button" class="btn btn-primary" [disabled]="saving()" (click)="save()">
+                {{ saving() ? t('common.loading') : t('common.save') }}
+              </button>
+            </div>
+          }
+        </div>
+      </section>
+    </div>
+  }
+</ng-container>

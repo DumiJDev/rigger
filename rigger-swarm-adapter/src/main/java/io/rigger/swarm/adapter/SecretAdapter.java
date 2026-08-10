@@ -1,6 +1,7 @@
 package io.rigger.swarm.adapter;
 
 import com.github.dockerjava.api.DockerClient;
+import com.github.dockerjava.api.model.Secret;
 import com.github.dockerjava.api.model.SecretSpec;
 import io.rigger.core.domain.resource.ObjectMeta;
 import io.rigger.swarm.client.DockerApiException;
@@ -11,12 +12,15 @@ import org.springframework.stereotype.Component;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Translates Rigger Secret resources to Docker Secrets using docker-java.
  *
- * SECURITY: Values passed to this adapter must already be AES-256-GCM encrypted
- * by SecretEncryptor. Secret values are never logged.
+ * SECURITY: Docker Swarm needs the real secret value to mount into containers — it has its
+ * own at-rest encryption independent of Rigger's. Callers must DECRYPT values (via
+ * SecretEncryptor) before calling {@link #create}; Rigger's AES-256-GCM layer only protects
+ * values while they sit in Rigger's own SQLite store. Values are never logged here either way.
  */
 @Component
 public class SecretAdapter {
@@ -33,15 +37,15 @@ public class SecretAdapter {
 
     /**
      * Creates a Docker Secret.
-     * @param meta          Resource metadata.
-     * @param encryptedData Pre-encrypted values (AES-256-GCM). Never logged.
+     * @param meta Resource metadata.
+     * @param data Real (decrypted) values — this is what containers will see. Never logged.
      */
-    public String create(ObjectMeta meta, Map<String, String> encryptedData) {
+    public String create(ObjectMeta meta, Map<String, String> data) {
         // Log only keys, never values
-        log.info("Creating Docker Secret: {}/{} (keys: {})", meta.namespace(), meta.name(), encryptedData.keySet());
+        log.info("Creating Docker Secret: {}/{} (keys: {})", meta.namespace(), meta.name(), data.keySet());
         try {
             var json = new com.fasterxml.jackson.databind.ObjectMapper()
-                .writeValueAsBytes(encryptedData);
+                .writeValueAsBytes(data);
 
             var spec = new SecretSpec()
                 .withName("rigger-" + meta.namespace() + "-" + meta.name())
@@ -61,13 +65,29 @@ public class SecretAdapter {
     }
 
     /** Lists managed secrets (metadata only — Docker never returns secret values). */
-    public List<?> listManaged() {
+    public List<Secret> listManaged() {
         try {
             return docker().listSecretsCmd()
                 .withLabelFilter(Map.of("rigger.io/managed", "true"))
                 .exec();
         } catch (Exception e) {
             throw new DockerApiException("Failed to list managed secrets", e);
+        }
+    }
+
+    /** Finds a Rigger-managed Secret by namespace and name (metadata only). */
+    public Optional<Secret> find(String namespace, String name) {
+        try {
+            return docker().listSecretsCmd()
+                .withLabelFilter(Map.of(
+                    "rigger.io/namespace", namespace,
+                    "rigger.io/name", name
+                ))
+                .exec()
+                .stream()
+                .findFirst();
+        } catch (Exception e) {
+            throw new DockerApiException("Failed to find secret " + namespace + "/" + name, e);
         }
     }
 

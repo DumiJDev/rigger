@@ -1,0 +1,13 @@
+{
+  "name": "rigger-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser walkthrough of the Rigger console against a running server. Kept out of rigger-console on purpose: npm ci there runs during every mvn package, and Playwright has no business slowing that down.",
+  "scripts": {
+    "console": "node console.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

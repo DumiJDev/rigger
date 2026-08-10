@@ -1,0 +1,204 @@
+<ng-container *transloco="let t">
+  <r-page-header [title]="t('topology.title')" [subtitle]="t('topology.subtitle')">
+    <div class="flex rounded-lg border" style="border-color: var(--border-subtle)">
+      <button
+        type="button"
+        class="px-3 py-1.5 text-sm"
+        [style.background-color]="view() === 'graph' ? 'var(--surface-sunken)' : 'transparent'"
+        [style.font-weight]="view() === 'graph' ? '500' : '400'"
+        (click)="view.set('graph')"
+      >
+        {{ t('topology.graph') }}
+      </button>
+      <button
+        type="button"
+        class="px-3 py-1.5 text-sm"
+        [style.background-color]="view() === 'list' ? 'var(--surface-sunken)' : 'transparent'"
+        [style.font-weight]="view() === 'list' ? '500' : '400'"
+        (click)="view.set('list')"
+      >
+        {{ t('topology.list') }}
+      </button>
+    </div>
+    <button type="button" class="btn btn-ghost" (click)="load()">{{ t('common.refresh') }}</button>
+  </r-page-header>
+
+  <r-data-state
+    [loading]="loading()"
+    [error]="error() ? t(error()!) : null"
+    [empty]="!data()?.nodes?.length"
+    [emptyMessage]="t('topology.empty')"
+    (retry)="load()"
+  >
+    <div class="grid gap-4" [class.lg:grid-cols-3]="selected()">
+      <div class="surface overflow-hidden" [class.lg:col-span-2]="selected()">
+        @if (view() === 'graph') {
+          <div class="table-wrap p-2">
+            <svg
+              [attr.viewBox]="'0 0 780 ' + canvasHeight()"
+              [attr.height]="canvasHeight()"
+              class="w-full min-w-[700px]"
+              role="img"
+              [attr.aria-label]="t('topology.title')"
+            >
+              <!-- Edges first so nodes paint over them -->
+              @for (l of links(); track $index) {
+                <line
+                  [attr.x1]="l.x1"
+                  [attr.y1]="l.y1"
+                  [attr.x2]="l.x2"
+                  [attr.y2]="l.y2"
+                  stroke="var(--border-subtle)"
+                  stroke-width="1.5"
+                  [attr.stroke-dasharray]="l.type === 'mounts' ? '4 4' : null"
+                />
+              }
+
+              @for (n of placed(); track n.id) {
+                <g
+                  class="cursor-pointer"
+                  (click)="selected.set(n)"
+                  tabindex="0"
+                  (keydown.enter)="selected.set(n)"
+                >
+                  <rect
+                    [attr.x]="n.x"
+                    [attr.y]="n.y"
+                    width="110"
+                    height="52"
+                    rx="10"
+                    fill="var(--surface-raised)"
+                    [attr.stroke]="selected()?.id === n.id ? 'var(--color-brand-500)' : 'var(--border-subtle)'"
+                    [attr.stroke-width]="selected()?.id === n.id ? 2 : 1"
+                  />
+                  <circle
+                    [attr.cx]="n.x + 14"
+                    [attr.cy]="n.y + 16"
+                    r="4"
+                    [attr.fill]="nodeColour(n)"
+                  />
+                  <text
+                    [attr.x]="n.x + 24"
+                    [attr.y]="n.y + 20"
+                    font-size="10"
+                    fill="var(--text-muted)"
+                  >
+                    {{ n.kind }}
+                  </text>
+                  <text
+                    [attr.x]="n.x + 12"
+                    [attr.y]="n.y + 38"
+                    font-size="12"
+                    font-weight="500"
+                    fill="var(--text-primary)"
+                  >
+                    {{ n.name.length > 14 ? n.name.slice(0, 13) + '…' : n.name }}
+                  </text>
+                  @if (n.desiredReplicas !== null) {
+                    <text
+                      [attr.x]="n.x + 98"
+                      [attr.y]="n.y + 20"
+                      font-size="10"
+                      text-anchor="end"
+                      fill="var(--text-muted)"
+                    >
+                      {{ n.runningReplicas }}/{{ n.desiredReplicas }}
+                    </text>
+                  }
+                </g>
+              }
+            </svg>
+          </div>
+        } @else {
+          <div class="table-wrap">
+            <table class="data">
+              <thead>
+                <tr>
+                  <th>{{ t('common.kind') }}</th>
+                  <th>{{ t('common.name') }}</th>
+                  <th>{{ t('common.image') }}</th>
+                  <th>{{ t('common.replicas') }}</th>
+                  <th>{{ t('common.status') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (n of data()!.nodes; track n.id) {
+                  <tr class="cursor-pointer" (click)="selected.set(n)">
+                    <td class="muted">{{ n.kind }}</td>
+                    <td class="font-medium">{{ n.name }}</td>
+                    <td class="muted">{{ n.image ?? '—' }}</td>
+                    <td class="tabular-nums">
+                      {{ n.desiredReplicas === null ? '—' : n.runningReplicas + '/' + n.desiredReplicas }}
+                    </td>
+                    <td>
+                      @if (n.health !== 'n/a') {
+                        <r-status-badge [status]="n.health" [label]="t('health.' + n.health)" />
+                      } @else {
+                        <span class="muted">—</span>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </div>
+
+      @if (selected(); as node) {
+        <aside class="surface p-4">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0">
+              <div class="muted text-xs">{{ node.kind }}</div>
+              <h2 class="truncate text-base font-semibold">{{ node.name }}</h2>
+            </div>
+            <button type="button" class="btn btn-ghost py-1" (click)="selected.set(null)">
+              {{ t('common.close') }}
+            </button>
+          </div>
+
+          <dl class="mt-4 space-y-3 text-sm">
+            @if (node.health !== 'n/a') {
+              <div class="flex items-center justify-between gap-2">
+                <dt class="muted">{{ t('common.status') }}</dt>
+                <dd><r-status-badge [status]="node.health" [label]="t('health.' + node.health)" /></dd>
+              </div>
+            }
+            @if (node.image) {
+              <div class="flex items-start justify-between gap-2">
+                <dt class="muted shrink-0">{{ t('common.image') }}</dt>
+                <dd class="truncate text-right">{{ node.image }}</dd>
+              </div>
+            }
+            @if (node.desiredReplicas !== null) {
+              <div class="flex items-center justify-between gap-2">
+                <dt class="muted">{{ t('common.replicas') }}</dt>
+                <dd class="tabular-nums">{{ node.runningReplicas }} / {{ node.desiredReplicas }}</dd>
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <dt class="muted">{{ t('deployments.hpa') }}</dt>
+                <dd>{{ node.hpaEnabled ? t('common.yes') : t('common.no') }}</dd>
+              </div>
+            }
+          </dl>
+
+          <h3 class="mt-5 text-xs font-semibold uppercase tracking-wide muted">
+            {{ t('topology.connections') }}
+          </h3>
+          @if (connectionsOf().length) {
+            <ul class="mt-2 space-y-1.5 text-sm">
+              @for (c of connectionsOf(); track c.other + c.type) {
+                <li class="flex items-center gap-2">
+                  <span class="muted text-xs">{{ t('topology.' + c.type) }}</span>
+                  <span class="truncate">{{ c.other }}</span>
+                </li>
+              }
+            </ul>
+          } @else {
+            <p class="muted mt-2 text-sm">{{ t('topology.noConnections') }}</p>
+          }
+        </aside>
+      }
+    </div>
+  </r-data-state>
+</ng-container>

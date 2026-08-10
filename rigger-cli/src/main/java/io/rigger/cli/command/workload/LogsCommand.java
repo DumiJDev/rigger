@@ -1,8 +1,8 @@
 package io.rigger.cli.command.workload;
 
 import io.rigger.cli.config.CliConfig;
-import okhttp3.*;
 import picocli.CommandLine.*;
+import java.io.IOException;
 import java.util.concurrent.Callable;
 
 /** riggerctl logs <pod-name> -n prod [--follow] */
@@ -12,21 +12,26 @@ public class LogsCommand implements Callable<Integer> {
     @Parameters(index = "0", description = "Pod name") String pod;
     @Option(names = {"-n", "--namespace"}) String namespace;
     @Option(names = {"--follow", "-f"}, description = "Stream logs continuously") boolean follow;
+    @Option(names = {"--insecure", "-i"}, description = "Skip TLS verification") boolean insecure;
 
     @Override
     public Integer call() throws Exception {
         var cfg = CliConfig.load();
         if (namespace == null) namespace = cfg.defaultNamespace();
+        var client = cfg.client(insecure);
 
-        String url = cfg.server() + "/api/v1/namespaces/" + namespace + "/pods/" + pod + "/logs"
+        String path = "/api/v1/namespaces/" + namespace + "/pods/" + pod + "/logs"
             + (follow ? "?follow=true" : "");
 
-        var req  = new Request.Builder().url(url).get().build();
-        var http = new OkHttpClient();
-        try (var resp = http.newCall(req).execute()) {
-            if (!resp.isSuccessful()) { System.err.println("Error: " + resp.code()); return 1; }
+        try (var resp = client.openStream(path)) {
             var source = resp.body().source();
-            while (!source.exhausted()) System.out.println(source.readUtf8Line());
+            try {
+                while (!source.exhausted()) System.out.println(source.readUtf8Line());
+            } catch (IOException e) {
+                // The server closes the underlying connection once Docker's log stream ends —
+                // that can surface as a truncated-chunk IOException rather than a clean EOF.
+                // Already-printed lines are complete either way; nothing left to recover.
+            }
         }
         return 0;
     }

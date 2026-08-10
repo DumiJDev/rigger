@@ -6,7 +6,10 @@
     <parent><groupId>io.rigger</groupId><artifactId>rigger</artifactId><version>1.0.0-SNAPSHOT</version></parent>
     <artifactId>rigger-server</artifactId>
     <name>Rigger Server</name>
-    <description>Fat JAR: assembles all modules + embedded React UI into a single executable Spring Boot application.</description>
+    <description>Fat JAR: assembles all modules + the built Angular console into a single executable Spring Boot application.</description>
+    <properties>
+        <ui.dir>${project.basedir}/../rigger-console</ui.dir>
+    </properties>
     <dependencies>
         <dependency><groupId>io.rigger</groupId><artifactId>rigger-core</artifactId></dependency>
         <dependency><groupId>io.rigger</groupId><artifactId>rigger-store</artifactId></dependency>
@@ -23,11 +26,105 @@
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-actuator</artifactId></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-jpa</artifactId></dependency>
         <dependency><groupId>org.xerial</groupId><artifactId>sqlite-jdbc</artifactId></dependency>
-        <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
+        <!-- Spring Boot 4 moved Flyway auto-configuration out of spring-boot-autoconfigure into a
+             dedicated module: with only flyway-core on the classpath the migrations never run and
+             Hibernate then fails schema validation against an empty database. -->
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-flyway</artifactId></dependency>
         <dependency><groupId>org.hibernate.orm</groupId><artifactId>hibernate-community-dialects</artifactId></dependency>
     </dependencies>
     <build>
+        <!-- The console's build output is a resource root rather than a copy-resources execution.
+             Both run in process-resources via maven-resources-plugin, but only <resources> is
+             honoured by IDE incremental builds — with a copy-resources execution, `mvn clean`
+             followed by Run in the IDE would start a server with no UI.
+
+             Declaring this block loses the implicit src/main/resources entry, hence re-declaring it.
+             filtering MUST stay off: Maven's default delimiters include @...@, and Angular CSS is
+             full of @media/@layer while minified JS is full of ${...} — filtering would silently
+             corrupt the bundles. The non-filtered-extension defaults cover ico/png but not
+             js/css/json/html, so they are no safety net here. -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>${ui.dir}/dist</directory>
+                <targetPath>static/ui</targetPath>
+                <filtering>false</filtering>
+            </resource>
+            <!-- No <overwrite> override here: maven-resources-plugin's default change detection has
+                 compared *content* rather than timestamps since 3.4.0, which is exactly what's
+                 wanted on a Windows-mounted filesystem where timestamp granularity can hide a real
+                 change. Setting overwrite=true also logs a deprecation now. -->
+        </resources>
         <plugins>
+            <!-- Builds the Angular console so `mvn package` produces a complete artifact. Before
+                 this, the UI was built by hand and a fresh clone yielded a jar with no UI at all.
+                 Skip with -Dui.skip=true when iterating on the backend. -->
+            <plugin>
+                <groupId>com.github.eirslett</groupId>
+                <artifactId>frontend-maven-plugin</artifactId>
+                <configuration>
+                    <workingDirectory>${ui.dir}</workingDirectory>
+                    <!-- Node toolchain lives beside the console's node_modules, NOT under target/.
+                         Under target/ it made `mvn clean` fail outright: deleting Node's deeply
+                         nested npm tree on a Windows-mounted filesystem reports "Directory not
+                         empty" and needs several passes, so every clean build broke. Keeping it
+                         here also avoids re-extracting ~50MB on each clean. Trade-off to know:
+                         this directory is platform-specific, so if you ever build the same checkout
+                         from both WSL and Windows Maven, delete rigger-console/node between them. -->
+                    <installDirectory>${ui.dir}</installDirectory>
+                    <skip>${ui.skip}</skip>
+                </configuration>
+                <executions>
+                    <!-- Same plugin, same phase: these run in declaration order. -->
+                    <execution>
+                        <id>install-node-and-npm</id>
+                        <goals><goal>install-node-and-npm</goal></goals>
+                        <configuration>
+                            <nodeVersion>${node.version}</nodeVersion>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-ci</id>
+                        <goals><goal>npm</goal></goals>
+                        <configuration>
+                            <arguments>ci</arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-build</id>
+                        <goals><goal>npm</goal></goals>
+                        <configuration>
+                            <arguments>run build</arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-clean-plugin</artifactId>
+                <executions>
+                    <!-- Angular wipes its own dist/, but nothing wipes target/classes/static/ui.
+                         Without this, repeated builds without `clean` accumulate orphaned hashed
+                         chunks that then ship inside the jar. -->
+                    <execution>
+                        <id>wipe-stale-ui</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>clean</goal></goals>
+                        <configuration>
+                            <excludeDefaultDirectories>true</excludeDefaultDirectories>
+                            <filesets>
+                                <fileset>
+                                    <directory>${project.build.outputDirectory}/static/ui</directory>
+                                </fileset>
+                            </filesets>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

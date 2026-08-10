@@ -63,6 +63,19 @@ public class RiggerApiClient {
         }
     }
 
+    /**
+     * Opens a streaming GET (e.g. logs --follow). No read timeout — the caller controls how
+     * long the connection stays open. The caller MUST close the returned Response.
+     */
+    public Response openStream(String path) throws IOException {
+        var streamClient = http.newBuilder().readTimeout(0, TimeUnit.SECONDS).build();
+        var resp = streamClient.newCall(req(path).get().build()).execute();
+        if (!resp.isSuccessful()) {
+            assertOk(resp, "GET", path); // always throws
+        }
+        return resp;
+    }
+
     // ── private ────────────────────────────────────────────────────────────
 
     private Request.Builder req(String path) {

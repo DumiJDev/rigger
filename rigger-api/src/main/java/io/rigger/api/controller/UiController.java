@@ -2,26 +2,29 @@ package io.rigger.api.controller;
 
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
 
 /**
- * Serves the React SPA for all /ui/** routes.
- * Vite builds to static/ui/index.html inside the JAR.
- * This controller handles deep links (React Router client-side routing).
+ * Entry points for the console that the resource handler can't serve on its own.
+ *
+ * <p>{@code /ui} redirects so the console works without a trailing slash. {@code /ui/} is forwarded
+ * explicitly because it reaches the resource handler with an empty path, which is rejected as an
+ * unresolvable resource before any custom resolver runs — the console's own root URL would 500.
+ *
+ * <p>Everything else under {@code /ui/} — assets and client-side routes alike — is handled by
+ * {@link io.rigger.api.config.UiResourceConfig}, which resolves by file existence. These mappings
+ * are deliberately exact paths: a wildcard here would take precedence over the resource handler and
+ * shadow the real files.
  */
 @Controller
-@RequestMapping("/ui")
 public class UiController {
 
-  // /ui → index.html
-  @GetMapping({"", "/"})
-  public String uiRoot() {
-    return "forward:/ui/index.html";
+  @GetMapping("/ui")
+  public String uiRootRedirect() {
+    return "redirect:/ui/";
   }
 
-  // /ui/dashboard, /ui/nodes, etc. → index.html (React Router handles it)
-  @GetMapping("/**")
-  public String uiRoutes() {
+  @GetMapping("/ui/")
+  public String uiRoot() {
     return "forward:/ui/index.html";
   }
 }
