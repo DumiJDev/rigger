@@ -12,43 +12,91 @@
      in an air-gapped cluster. */
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
-  /* One accent, used deliberately. The previous UI declared a palette and then ignored it in
-     favour of hard-coded hex values, which is a large part of why it read as unfinished. */
-  --color-brand-50:  oklch(0.97 0.02 200);
-  --color-brand-100: oklch(0.93 0.04 200);
-  --color-brand-200: oklch(0.87 0.07 200);
-  --color-brand-300: oklch(0.78 0.10 199);
-  --color-brand-400: oklch(0.70 0.12 198);
-  --color-brand-500: oklch(0.62 0.13 197);
-  --color-brand-600: oklch(0.54 0.12 197);
-  --color-brand-700: oklch(0.45 0.10 197);
-  --color-brand-800: oklch(0.37 0.08 197);
-  --color-brand-900: oklch(0.30 0.06 198);
+  /* Electric violet, hue ~295. Chosen for a functional reason as much as an aesthetic one: the
+     status colours already occupy green (150), amber (80) and red (25), and violet is the only
+     family left that can never be mistaken for one of them. It also isn't taken — Docker,
+     Kubernetes and OpenShift are all blue, Grafana is orange. */
+  --color-brand-50:  oklch(0.97 0.02 295);
+  --color-brand-100: oklch(0.94 0.04 295);
+  --color-brand-200: oklch(0.88 0.08 295);
+  --color-brand-300: oklch(0.79 0.13 295);
+  --color-brand-400: oklch(0.69 0.18 295);
+  --color-brand-500: oklch(0.60 0.21 295);
+  --color-brand-600: oklch(0.53 0.22 295);
+  --color-brand-700: oklch(0.45 0.19 295);
+  --color-brand-800: oklch(0.37 0.15 296);
+  --color-brand-900: oklch(0.29 0.11 297);
 
-  /* Status colours are semantic, not decorative: the same green always means "healthy". */
+  /* Status colours are semantic, not decorative: the same green always means "healthy".
+     Deliberately kept clear of the brand hue so an accent can never read as a state. */
   --color-ok:    oklch(0.65 0.15 150);
   --color-warn:  oklch(0.75 0.15 80);
   --color-error: oklch(0.60 0.19 25);
+  --color-info:  oklch(0.62 0.13 240);
   --color-idle:  oklch(0.65 0.02 250);
+
+  /* Denser type scale than Tailwind's default: 13px body, 12px in tables. An operations console
+     is read at a glance across many rows, not paragraph by paragraph. */
+  --text-2xs:    0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-xs:     0.75rem;
+  --text-xs--line-height: 1.0625rem;
+  --text-sm:     0.8125rem;
+  --text-sm--line-height: 1.125rem;
+  --text-base:   0.875rem;
+  --text-base--line-height: 1.25rem;
 }
 
-/* Surface tokens, redefined once for dark mode so components never branch on theme themselves. */
+/* Surface tokens, redefined once for dark mode so components never branch on theme themselves.
+   Neutrals are graphite — a slight cool cast (hue 285) rather than pure grey, so they sit under the
+   violet accent instead of fighting it. */
 :root {
-  --surface-page:   oklch(0.98 0.003 250);
-  --surface-raised: oklch(1 0 0);
-  --surface-sunken: oklch(0.955 0.004 250);
-  --border-subtle:  oklch(0.90 0.005 250);
-  --text-primary:   oklch(0.25 0.01 250);
-  --text-muted:     oklch(0.52 0.012 250);
+  --surface-page:     oklch(0.975 0.004 285);
+  --surface-raised:   oklch(1 0 0);
+  --surface-sunken:   oklch(0.950 0.006 285);
+  --border-subtle:    oklch(0.895 0.006 285);
+  --border-strong:    oklch(0.815 0.010 285);
+  --text-primary:     oklch(0.24 0.012 285);
+  --text-muted:       oklch(0.51 0.014 285);
+  --text-faint:       oklch(0.64 0.012 285);
+
+  /* The masthead stays dark in both themes. That is deliberate and is the single strongest cue
+     borrowed from the OpenShift console: a dark bar anchors the page and separates chrome from
+     content, so it does not flip with the theme. */
+  --surface-masthead: oklch(0.205 0.018 288);
+  --masthead-border:  oklch(0.285 0.022 288);
+  --masthead-text:    oklch(0.96 0.004 285);
+  --masthead-muted:   oklch(0.72 0.012 285);
 }
 
 .dark {
-  --surface-page:   oklch(0.18 0.008 250);
-  --surface-raised: oklch(0.22 0.009 250);
-  --surface-sunken: oklch(0.15 0.008 250);
-  --border-subtle:  oklch(0.30 0.010 250);
-  --text-primary:   oklch(0.95 0.004 250);
-  --text-muted:     oklch(0.68 0.010 250);
+  --surface-page:     oklch(0.165 0.012 285);
+  --surface-raised:   oklch(0.205 0.014 285);
+  --surface-sunken:   oklch(0.140 0.010 285);
+  --border-subtle:    oklch(0.285 0.016 285);
+  --border-strong:    oklch(0.380 0.020 285);
+  --text-primary:     oklch(0.955 0.004 285);
+  --text-muted:       oklch(0.685 0.014 285);
+  --text-faint:       oklch(0.560 0.014 285);
+
+  --surface-masthead: oklch(0.135 0.014 288);
+  --masthead-border:  oklch(0.245 0.018 288);
+}
+
+/* Density is a set of tokens switched by an attribute on <html>, so a single toggle re-lays out
+   every table without any component knowing about it. Compact is the default: this is a console
+   read across many rows at once. */
+:root,
+:root[data-density="compact"] {
+  --row-h:   30px;
+  --cell-py: 0.3125rem;
+  --cell-px: 0.6875rem;
+}
+
+:root[data-density="comfortable"] {
+  --row-h:   38px;
+  --cell-py: 0.5rem;
+  --cell-px: 0.875rem;
 }
 
 @layer base {
@@ -80,9 +128,6 @@
   }
   .muted {
     color: var(--text-muted);
-  }
-  .divider {
-    border-color: var(--border-subtle);
   }
 
   .btn {
@@ -146,20 +191,47 @@
   table.data {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.875rem;
+    font-size: var(--text-xs);
   }
   table.data th {
     text-align: left;
-    font-weight: 500;
+    font-weight: 600;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
     color: var(--text-muted);
-    padding: 0.625rem 0.875rem;
+    padding: var(--cell-py) var(--cell-px);
+    background-color: var(--surface-sunken);
     border-bottom: 1px solid var(--border-subtle);
     white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 1;
   }
   table.data td {
-    padding: 0.6875rem 0.875rem;
+    padding: var(--cell-py) var(--cell-px);
     border-bottom: 1px solid var(--border-subtle);
     vertical-align: middle;
+    height: var(--row-h);
+  }
+  /* Numbers line up column-wise; without this, replica counts and CPU values jitter row to row. */
+  table.data .num {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  /* Sortable headers: the whole cell is the hit target, and the caret only shows the active key. */
+  table.data th.sortable {
+    cursor: pointer;
+    user-select: none;
+  }
+  table.data th.sortable:hover {
+    color: var(--text-primary);
+  }
+  table.data th[aria-sort]:not([aria-sort="none"]) {
+    color: var(--color-brand-600);
+  }
+  .dark table.data th[aria-sort]:not([aria-sort="none"]) {
+    color: var(--color-brand-300);
   }
   table.data tbody tr:last-child td {
     border-bottom: none;
@@ -170,6 +242,83 @@
 }
 
 @layer components {
+  /* Panels: the Grafana unit of a dashboard. A tight header strip with a title and optional
+     actions, then content. Distinct from .surface, which is a plain container. */
+  .panel {
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .panel-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4375rem 0.6875rem;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .panel-title {
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .panel-body {
+    padding: 0.6875rem;
+    min-width: 0;
+  }
+  /* A single big number. Tabular so a changing value doesn't shift the layout under it. */
+  .kpi {
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /* Toolbar above a list: search and filters left, primary action right. */
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4375rem 0;
+  }
+
+  /* Chip for labels, keys and counts. */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: 0.25rem;
+    padding: 0.0625rem 0.3125rem;
+    font-size: var(--text-2xs);
+    background-color: var(--surface-sunken);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  /* Icon-only control, sized to the compact row height so it never stretches a table row. */
+  .btn-icon {
+    display: inline-grid;
+    place-items: center;
+    height: 1.5rem;
+    width: 1.5rem;
+    border-radius: 0.25rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    background: transparent;
+    border: 1px solid transparent;
+  }
+  .btn-icon:hover {
+    background-color: var(--surface-sunken);
+    color: var(--text-primary);
+  }
+
   /* Sidebar navigation — shared by every nav entry so active state is consistent. */
   .nav-link {
     display: flex;
