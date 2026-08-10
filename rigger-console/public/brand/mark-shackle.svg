@@ -1,0 +1,16 @@
+<!--
+  Concept B — "shackle": the rigging hardware that joins loads and takes the strain. Drawn directly
+  rather than by transforming a shape: the earlier version rotated a U by 180° and ended up reading
+  as a table.
+
+  Bow open at the top, pin closing it, load ring below. Heavy strokes so it survives 16px.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-label="Rigger">
+  <!-- bow: down the left ear, round the bottom, back up the right ear -->
+  <path d="M10 8.5 V17.5 A6 6 0 0 0 22 17.5 V8.5"
+        stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/>
+  <!-- pin across the ears -->
+  <path d="M6.5 8.5 H25.5" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/>
+  <!-- the load it carries -->
+  <circle cx="16" cy="26" r="2.4" fill="currentColor"/>
+</svg>
