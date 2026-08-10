@@ -286,6 +286,86 @@ jobs:
           echo "service version never stopped climbing; reconciliation is not converging"
           exit 1
 
+      # Wrong status codes are as much a defect as wrong data: a 500 tells the caller to retry and
+      # tells us to go read a stack trace, when in each of these cases the request was simply bad.
+      # All three returned 500 before they were mapped.
+      - name: API error contract
+        run: |
+          set -e
+          T=$(curl -sk -X POST https://localhost:7433/api/v1/auth/login \
+                -H 'Content-Type: application/json' \
+                -d "{\"username\":\"admin\",\"password\":\"$RIGGER_ADMIN_PASSWORD\"}" \
+              | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+          echo "$T" > /tmp/token
+          fail=0
+          check() { # description, expected, actual
+            printf '%-52s expected %s got %s\n' "$1" "$2" "$3"
+            [ "$2" = "$3" ] || fail=1
+          }
+          api() { curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $T" "$@"; }
+
+          check "unmapped URL is 404, not 500" 404 \
+            "$(api https://localhost:7433/api/v1/no-such-endpoint)"
+          check "malformed JSON body is 400, not 500" 400 \
+            "$(api -X POST https://localhost:7433/api/v1/namespaces/default/apply \
+                 -H 'Content-Type: application/json' -d '{not json')"
+          # dryRun is optional, but a plain boolean record component made omitting it a 500.
+          check "apply without dryRun succeeds" 200 \
+            "$(api -X POST https://localhost:7433/api/v1/namespaces/default/apply \
+                 -H 'Content-Type: application/json' \
+                 -d '{"manifest":"apiVersion: rigger.io/v1\nkind: ConfigMap\nmetadata:\n  name: ci-nodry\n  namespace: default\nspec:\n  data:\n    K: \"v\"\n"}')"
+          exit $fail
+
+      # The sampler is the only thing that makes the console's charts survive a reload, and it fails
+      # silently: an empty series and a broken sampler look identical from the outside.
+      - name: Metrics series is recorded and scoped
+        run: |
+          set -e
+          T=$(cat /tmp/token)
+          fail=0
+          series() {
+            curl -sk -H "Authorization: Bearer $T" \
+              "https://localhost:7433/api/v1/metrics/series?$1"
+          }
+          points=$(series 'metric=replicas.running&minutes=60' \
+            | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["points"]))')
+          echo "cluster series points: $points"
+          [ "$points" -ge 2 ] || { echo "sampler recorded no history"; fail=1; }
+
+          ordered=$(series 'metric=replicas.running&minutes=60' | python3 -c 'import sys,json;p=json.load(sys.stdin)["points"];print(all(a["t"]<=b["t"] for a,b in zip(p,p[1:])))')
+          echo "points ordered oldest-first: $ordered"
+          [ "$ordered" = "True" ] || { echo "series is not in plot order"; fail=1; }
+
+          dep=$(series 'metric=deployment.replicas.desired&namespace=default&name=ci-web&minutes=60' \
+            | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["points"]))')
+          echo "per-Deployment series points: $dep"
+          [ "$dep" -ge 1 ] || { echo "no per-Deployment samples"; fail=1; }
+
+          # A typo must not be indistinguishable from "no data yet".
+          code=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $T" \
+            'https://localhost:7433/api/v1/metrics/series?metric=cpu.bogus')
+          echo "unknown metric -> $code"
+          [ "$code" = "400" ] || fail=1
+
+          # A namespace-scoped identity may chart its own workloads but not the cluster.
+          curl -sk -X POST https://localhost:7433/api/v1/users -H "Authorization: Bearer $T" \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"ci-dep","password":"ci-deployer-password","role":"DEPLOYER","namespace":"default"}' \
+            -o /dev/null
+          D=$(curl -sk -X POST https://localhost:7433/api/v1/auth/login \
+                -H 'Content-Type: application/json' \
+                -d '{"username":"ci-dep","password":"ci-deployer-password"}' \
+              | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+          scoped=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $D" \
+            'https://localhost:7433/api/v1/metrics/series?metric=nodes.total')
+          echo "cluster metric as DEPLOYER -> $scoped"
+          [ "$scoped" = "403" ] || fail=1
+          own=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $D" \
+            'https://localhost:7433/api/v1/metrics/series?metric=deployment.cpu&namespace=default&name=ci-web')
+          echo "own Deployment metric as DEPLOYER -> $own"
+          [ "$own" = "200" ] || fail=1
+          exit $fail
+
       - name: Install Playwright
         working-directory: e2e
         run: |
