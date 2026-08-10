@@ -233,6 +233,33 @@
   .dark table.data th[aria-sort]:not([aria-sort="none"]) {
     color: var(--color-brand-300);
   }
+  /* Direction as a caret, not only as a tint. Colour alone cannot express which way the sort runs,
+     and to anyone who does not separate these two hues it says nothing at all. Done in CSS so the
+     four list pages need no extra markup per column. */
+  table.data th.sortable::after {
+    content: '';
+    display: inline-block;
+    margin-left: 0.3em;
+    border-left: 3px solid transparent;
+    border-right: 3px solid transparent;
+    /* Reserved even when unsorted, so the header text does not shift on the first click. */
+    border-top: 4px solid transparent;
+    border-bottom: 0;
+    vertical-align: 0.1em;
+  }
+  table.data th[aria-sort="ascending"]::after {
+    border-bottom: 4px solid currentColor;
+    border-top: 0;
+  }
+  table.data th[aria-sort="descending"]::after {
+    border-top: 4px solid currentColor;
+    border-bottom: 0;
+  }
+  /* A hint on hover that an unsorted column can be sorted at all. */
+  table.data th.sortable:hover[aria-sort="none"]::after {
+    border-bottom: 4px solid var(--border-strong);
+    border-top: 0;
+  }
   table.data tbody tr:last-child td {
     border-bottom: none;
   }
@@ -277,6 +304,41 @@
     line-height: 1.15;
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.01em;
+  }
+
+  /* Item in a dropdown menu. Full-width hit target, so the whole row is clickable rather than
+     just the text. */
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.3125rem 0.625rem;
+    font-size: var(--text-xs);
+    text-align: left;
+    color: var(--text-primary);
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
+  .menu-item:hover:not(:disabled) {
+    background-color: var(--surface-sunken);
+  }
+  .menu-item:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .menu-item-danger {
+    color: var(--color-error);
+  }
+
+  /* Chromium draws its own clear widget inside type="search", which sat right next to ours and
+     showed two X buttons in the same field. The type stays "search" for its semantics and mobile
+     keyboard; only the browser's decoration goes, since ours is styled and translated. */
+  .input[type='search']::-webkit-search-cancel-button,
+  .input[type='search']::-webkit-search-decoration {
+    -webkit-appearance: none;
+    appearance: none;
   }
 
   /* Toolbar above a list: search and filters left, primary action right. */

@@ -134,6 +134,63 @@ try {
   const deploymentRows = await page.$$eval('table.data tbody tr', (r) => r.length);
   check('deployments list renders', deploymentRows > 0, `${deploymentRows} row(s)`);
 
+  // ── List toolbar: sorting, search, row menu ──────────────────────────────
+  // All three live in ResourceListPage, so proving them on one list page proves the shared
+  // behaviour; the per-page part is only which columns are declared sortable.
+  const rowNames = () =>
+    page.$$eval('table.data tbody tr td:first-child', (c) => c.map((e) => e.textContent.trim()));
+  const th = (n) => page.locator('table.data thead th.sortable').nth(n);
+
+  const ascending = await rowNames();
+  check(
+    'list sorts by name ascending by default',
+    JSON.stringify(ascending) === JSON.stringify([...ascending].sort()),
+    ascending.join(','),
+  );
+
+  await th(0).click();
+  await page.waitForTimeout(400);
+  const descending = await rowNames();
+  const sortState = await th(0).getAttribute('aria-sort');
+  check(
+    'clicking the active column reverses it and reports aria-sort',
+    JSON.stringify(descending) === JSON.stringify([...ascending].reverse()) &&
+      sortState === 'descending',
+    `${descending.join(',')} aria-sort=${sortState}`,
+  );
+
+  // Term taken from a row that is actually there, so the check cannot pass by matching nothing —
+  // `every` on an empty array is true, which would have made this assertion decorative.
+  const needle = ascending[0].slice(0, 4);
+  await page.fill('input[type="search"]', needle);
+  await page.waitForTimeout(500);
+  const matched = await rowNames();
+  check(
+    'search filters the list',
+    matched.length > 0 && matched.every((n) => n.includes(needle)),
+    `"${needle}" -> ${matched.join(',')}`,
+  );
+
+  // An empty result from a filter must not read as "this namespace has no Deployments".
+  await page.fill('input[type="search"]', 'zzzzz');
+  await page.waitForTimeout(500);
+  const emptyText = (await page.textContent('main')) ?? '';
+  check(
+    'a filtered-out list says so instead of claiming there are no resources',
+    /Nothing matches|Nada corresponde/.test(emptyText),
+  );
+  await page.fill('input[type="search"]', '');
+  await page.waitForTimeout(500);
+  check('clearing the search restores every row', (await rowNames()).length === ascending.length);
+
+  await page.locator('table.data tbody tr').first().locator('r-row-menu button').click();
+  await page.waitForTimeout(300);
+  const menuItems = (await page.locator('[role="menuitem"]').allTextContents()).map((s) => s.trim());
+  check('row kebab menu opens with actions', menuItems.length > 0, menuItems.join(','));
+  await page.locator('h1').click();
+  await page.waitForTimeout(300);
+  check('row menu closes on an outside click', (await page.locator('[role="menuitem"]').count()) === 0);
+
   // ── Auto-refresh ─────────────────────────────────────────────────────────
   // One masthead interval replaced the Refresh button that used to sit on eleven pages, so two
   // things have to hold: the old buttons are gone, and the replacement actually re-fetches.
@@ -222,6 +279,14 @@ spec:
     await page.waitForTimeout(1200);
     const rendered = ((await page.textContent('h1')) ?? '').trim().length > 0;
     check(`${name} page renders`, rendered);
+
+    // "Renders" was too weak for this one: the Nodes page rendered a heading and an empty table on
+    // every cluster Rigger had not provisioned over SSH, because node reads came only from the
+    // provisioning table. A heading proves nothing; a row does.
+    if (name === 'nodes') {
+      const nodeRows = await page.$$eval('table.data tbody tr', (r) => r.length);
+      check('nodes page lists the cluster nodes', nodeRows > 0, `${nodeRows} row(s)`);
+    }
   }
 
   // ── Deep link survives a reload ──────────────────────────────────────────
