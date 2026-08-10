@@ -21,7 +21,7 @@ and an Angular console, built as a Java 21+ / Spring Boot 4.1 Maven multi-module
 | `rigger-api` | Spring MVC REST layer (`WorkloadController`, `ClusterController`, `AuthController`, `UserController`, `AuditController`). |
 | `rigger-cli` | `riggerctl` — Picocli-based CLI. |
 | `rigger-server` | Spring Boot fat-jar entry point (`RiggerApplication`); embeds the built console as static resources. |
-| `rigger-console` | Angular 22 + Tailwind 4 + Transloco (pt/en) + dark mode. Built separately (`npm run build`), output written straight into `rigger-server/src/main/resources/static/ui/` — no copy step, and `mvn` never triggers it. See the `angular` skill. |
+| `rigger-console` | Angular 22 + Tailwind 4 + Transloco (pt/en) + dark mode. Built into `rigger-console/dist/` and copied into the server jar by Maven — see Build & run. `ng serve` for UI work. See the `angular` skill. |
 
 ## Build & run
 
@@ -43,9 +43,36 @@ easy to miss until you actually call that specific endpoint.
 ### Full build
 
 ```bash
-mvn clean verify                     # all 14 modules, compiles + tests
-cd rigger-console && npm ci && npm run build   # output goes to rigger-server/.../static/ui/ automatically
+mvn clean verify                     # all 14 modules + builds the console into the jar
+mvn clean verify -Dui.skip=true      # backend only — skips npm entirely
 ```
+
+### How the console gets into the jar
+
+`rigger-server`'s pom runs the Angular build (frontend-maven-plugin: `install-node-and-npm`,
+`npm ci`, `npm run build` — all at `generate-resources`) and declares `rigger-console/dist` as a
+**resource root** with `targetPath=static/ui`, so `maven-resources-plugin` copies it into
+`target/classes` at `process-resources`. `UiResourceConfig` then serves it from
+`classpath:/static/ui/`. Nothing is generated inside `src/`.
+
+Details that are load-bearing, and were each found the hard way:
+
+- **`-Dui.skip=true` for backend iteration**, especially with `spring-boot:run`. That goal forks the
+  lifecycle up to `test-compile`, which *includes* `generate-resources` — so without the flag every
+  restart re-runs `npm ci` (minutes on a Windows-mounted path). With the flag and no `clean`, the
+  UI already in `target/classes` keeps being served. Working on the UI itself? Use `ng serve`, which
+  proxies `/api` to the running server via `proxy.conf.json`.
+- **The copy is a `<resources>` entry, not a `copy-resources` execution.** Only `<resources>` is
+  honoured by IDE incremental builds; with an execution, `mvn clean` + Run in the IDE gives a server
+  with no UI. Declaring the block also means `src/main/resources` must be re-declared explicitly.
+- **Resource filtering must stay off.** Maven's default `@...@` delimiters would mangle Angular CSS
+  (`@media`, `@layer`) and minified JS (`${...}`). The non-filtered-extension defaults cover
+  `ico`/`png` but not `js`/`css`/`json`/`html`.
+- **The Node toolchain installs to `rigger-console/node/`, not under `target/`.** Under `target/`,
+  `mvn clean` fails outright — deleting Node's deeply nested npm tree on a Windows mount reports
+  "Directory not empty" and needs several passes. Consequence to remember: that directory is
+  platform-specific, so delete it if you ever build the same checkout from both WSL and Windows.
+- **`node.version` needs its `v` prefix** (`v24.15.0`); the installer rejects it otherwise.
 
 ### Run the server locally (dev)
 

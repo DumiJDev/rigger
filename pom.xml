@@ -55,6 +55,17 @@
              "unix://localhost:2375" route). docker-java 3.7.1 bundles httpclient5 5.5.1 — close
              enough to Spring's managed version to avoid the conflict entirely. -->
         <docker-java.version>3.7.1</docker-java.version>
+
+        <!-- Angular console build, wired into rigger-server. The leading "v" on node.version is
+             mandatory: frontend-maven-plugin's NodeInstaller rejects a version without it.
+             npm is whatever ships with that Node — pinning the Node version makes it deterministic
+             anyway, and the plugin does not read package.json's "packageManager" field.
+             Set -Dui.skip=true to build the backend without running npm (see CLAUDE.md). -->
+        <frontend-maven-plugin.version>2.0.2</frontend-maven-plugin.version>
+        <maven-resources-plugin.version>3.5.0</maven-resources-plugin.version>
+        <maven-clean-plugin.version>3.5.0</maven-clean-plugin.version>
+        <node.version>v24.15.0</node.version>
+        <ui.skip>false</ui.skip>
     </properties>
 
     <dependencyManagement>
@@ -193,6 +204,21 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.5.4</version>
+                </plugin>
+                <plugin>
+                    <groupId>com.github.eirslett</groupId>
+                    <artifactId>frontend-maven-plugin</artifactId>
+                    <version>${frontend-maven-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-resources-plugin</artifactId>
+                    <version>${maven-resources-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-clean-plugin</artifactId>
+                    <version>${maven-clean-plugin.version}</version>
                 </plugin>
             </plugins>
         </pluginManagement>

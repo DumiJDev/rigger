@@ -10,7 +10,10 @@ The operator's web UI. Separate codebase, but its build output is embedded into 
 
 ## Build contract with the backend (don't break this)
 
-- Build output goes to `rigger-server/src/main/resources/static/ui` — there is no copy step.
+- Build output goes to `rigger-console/dist/`; `rigger-server`'s pom builds it
+  (frontend-maven-plugin at `generate-resources`) and declares `dist` as a resource root with
+  `targetPath=static/ui`, so it lands in the jar. Never point the Angular build back into
+  `src/main/resources` — that generates into the source tree.
 - `baseHref` is `/ui/` and the router must match it. `UiResourceConfig` serves `/ui/**` by file
   existence — real files are served, anything else falls back to `index.html` so deep links work —
   and `/ui/**` is `permitAll` in Spring Security. Don't replace that with a pattern-based forward:
@@ -20,7 +23,8 @@ The operator's web UI. Separate codebase, but its build output is embedded into 
 - API and UI are same-origin, so **no CORS config exists anywhere** — keep it that way. The dev
   server proxies `/api` and `/actuator` to `https://localhost:7433` with TLS verification off
   (self-signed dev cert).
-- `mvn` does not build the UI. It's a separate `npm run build`.
+- `mvn package` builds the UI. Use `-Dui.skip=true` for backend-only iteration — in particular with
+  `spring-boot:run`, which otherwise re-runs `npm ci` on every restart. For UI work use `ng serve`.
 
 ## Framework conventions
 
@@ -69,6 +73,14 @@ unfinished.
 
 Aim for calm and legible over decorated: consistent spacing scale, one accent colour, real
 loading/empty/error states for every data view (an empty table with no explanation is a bug).
+
+## No webfonts
+
+Don't add a Google Fonts (or any remote) `<link>`. Angular's production build inlines fonts by
+*fetching them at build time*, so a remote font makes `mvn package` fail whenever the network is
+unavailable — and it would have every operator's browser calling a third party on page load, which
+is wrong for a console that may run in an air-gapped cluster. The `--font-sans` token leads with
+Inter (used if the machine has it) and falls back to the platform UI font.
 
 ## i18n
 

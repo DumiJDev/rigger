@@ -28,7 +28,7 @@
               "src/styles.css"
             ],
             "outputPath": {
-              "base": "../rigger-server/src/main/resources/static/ui",
+              "base": "dist",
               "browser": ""
             },
             "baseHref": "/ui/",

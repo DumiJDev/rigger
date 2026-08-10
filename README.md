@@ -550,14 +550,11 @@ export TLS_KEYSTORE_PASSWORD=mypassword
 ```bash
 cd rigger/
 
-# 1. Build do frontend (gera ficheiros para rigger-server/src/main/resources/static/ui/)
-cd rigger-console
-npm install
-npm run build
-cd ..
-
-# 2. Build de todos os módulos Java
+# Um único comando: o Maven constrói a consola Angular e embute-a no jar.
 mvn clean package -DskipTests
+
+# A iterar apenas no backend? Salta o npm por completo:
+mvn clean package -DskipTests -Dui.skip=true
 
 # Artefactos gerados:
 # rigger-server/target/rigger-server.jar        ← servidor completo
