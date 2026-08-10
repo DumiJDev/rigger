@@ -93,6 +93,35 @@ export interface DeploymentMetrics {
   hpaTargetCpu: number | null;
 }
 
+/**
+ * Names match the server's enumerated {@code MetricNames}. Kept as a union rather than plain
+ * strings so a typo is a compile error here — the server answers an unknown name with a 400, but
+ * finding that out at runtime is worse than not shipping it.
+ */
+export type ClusterMetricName =
+  | 'nodes.active' | 'nodes.total' | 'services.managed'
+  | 'replicas.running' | 'replicas.desired'
+  | 'resources.deployments' | 'resources.services'
+  | 'resources.configmaps' | 'resources.secrets';
+
+export type DeploymentMetricName =
+  | 'deployment.cpu' | 'deployment.replicas.running' | 'deployment.replicas.desired';
+
+export type MetricName = ClusterMetricName | DeploymentMetricName;
+
+/** One point of a series. Short field names because a 24h window is thousands of these. */
+export interface MetricPoint {
+  t: string;
+  v: number;
+}
+
+export interface MetricSeries {
+  metric: MetricName;
+  namespace: string;
+  name: string;
+  points: MetricPoint[];
+}
+
 export interface TopologyNode {
   id: string;
   kind: string;

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "angular": {
+      "type": "stdio",
+      "command": "sh",
+      "args": [
+        "-c",
+        "cd rigger-console && exec node_modules/.bin/ng mcp"
+      ],
+      "env": {}
+    }
+  }
+}

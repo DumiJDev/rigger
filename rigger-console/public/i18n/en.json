@@ -3,258 +3,263 @@
     "name": "Rigger",
     "tagline": "Docker Swarm operator"
   },
-  "nav": {
-    "dashboard": "Dashboard",
-    "topology": "Topology",
-    "workloads": "Workloads",
-    "deployments": "Deployments",
-    "services": "Services",
-    "configmaps": "ConfigMaps",
-    "secrets": "Secrets",
-    "pods": "Pods",
-    "cluster": "Cluster",
-    "nodes": "Nodes",
-    "gitops": "GitOps",
-    "audit": "Audit",
-    "users": "Users",
-    "apply": "Apply YAML",
-    "administration": "Administration",
-    "toggleSidebar": "Toggle navigation",
-    "provisioning": "Provisioning"
-  },
-  "common": {
-    "name": "Name",
-    "namespace": "Namespace",
-    "kind": "Kind",
-    "image": "Image",
-    "replicas": "Replicas",
-    "status": "Status",
-    "actions": "Actions",
-    "appliedBy": "Applied by",
-    "updated": "Updated",
-    "created": "Created",
-    "loading": "Loading…",
-    "empty": "No data",
-    "error": "Something went wrong",
-    "retry": "Retry",
-    "cancel": "Cancel",
-    "save": "Save",
-    "delete": "Delete",
-    "confirm": "Confirm",
-    "close": "Close",
-    "search": "Search",
-    "refresh": "Refresh",
-    "none": "None",
-    "yes": "Yes",
-    "no": "No",
-    "all": "All",
-    "type": "Type",
-    "message": "Message",
-    "time": "Time",
-    "role": "Role",
-    "never": "Never"
-  },
-  "login": {
-    "title": "Sign in",
-    "subtitle": "Access your cluster console",
-    "username": "Username",
-    "password": "Password",
-    "submit": "Sign in",
-    "submitting": "Signing in…",
-    "failed": "Invalid username or password",
-    "expired": "Your session expired. Please sign in again."
-  },
-  "user": {
-    "signOut": "Sign out",
-    "allNamespaces": "all namespaces"
-  },
-  "theme": {
-    "label": "Theme",
-    "light": "Light",
-    "dark": "Dark",
-    "system": "System"
-  },
-  "language": {
-    "label": "Language"
-  },
-  "dashboard": {
-    "title": "Dashboard",
-    "subtitle": "Cluster overview",
-    "nodes": "Active nodes",
-    "deployments": "Deployments",
-    "runningTasks": "Running tasks",
-    "resources": "Resources",
-    "clusterHealth": "Cluster health",
-    "healthy": "Healthy",
-    "degraded": "Degraded",
-    "recentActivity": "Recent activity",
-    "noActivity": "No activity recorded yet",
-    "workloadHealth": "Workload health"
-  },
-  "topology": {
-    "title": "Topology",
-    "subtitle": "How this namespace's workloads connect",
-    "graph": "Graph",
-    "list": "List",
-    "empty": "Nothing deployed in this namespace yet",
-    "exposes": "exposes",
-    "mounts": "mounts",
-    "connections": "Connections",
-    "noConnections": "No connections"
-  },
-  "health": {
-    "healthy": "Healthy",
-    "degraded": "Degraded",
-    "down": "Down",
-    "unknown": "Not reconciled",
-    "na": "—"
-  },
-  "deployments": {
-    "title": "Deployments",
-    "subtitle": "Workloads in this namespace",
-    "empty": "No deployments in this namespace",
-    "scale": "Scale",
-    "scaleTitle": "Scale {{name}}",
-    "scaleLabel": "Replica count",
-    "deleteConfirm": "Delete deployment {{name}}? Its containers will be stopped.",
-    "cpu": "CPU",
-    "hpa": "Autoscaling"
-  },
-  "services": {
-    "title": "Services",
-    "subtitle": "Network exposure",
-    "empty": "No services in this namespace",
-    "ports": "Ports",
-    "deleteConfirm": "Delete service {{name}}?"
-  },
-  "configmaps": {
-    "title": "ConfigMaps",
-    "subtitle": "Non-sensitive configuration",
-    "empty": "No ConfigMaps in this namespace",
-    "keys": "Keys",
-    "deleteConfirm": "Delete ConfigMap {{name}}?"
-  },
-  "secrets": {
-    "title": "Secrets",
-    "subtitle": "Encrypted at rest and never returned by the API",
-    "empty": "No secrets in this namespace",
-    "redacted": "redacted",
-    "deleteConfirm": "Delete secret {{name}}?"
-  },
-  "pods": {
-    "title": "Pods",
-    "subtitle": "Running instances",
-    "empty": "No running pods",
-    "node": "Node",
-    "state": "State",
-    "desired": "Desired",
-    "logs": "Logs"
-  },
-  "logs": {
-    "title": "Logs for {{pod}}",
-    "follow": "Follow",
-    "pause": "Pause",
-    "clear": "Clear",
-    "filter": "Filter lines",
-    "waiting": "Waiting for output…",
-    "ended": "End of stream",
-    "failed": "Could not read logs"
-  },
-  "nodes": {
-    "title": "Nodes",
-    "subtitle": "Cluster machines",
-    "empty": "No nodes registered",
-    "ip": "IP address",
-    "primary": "Primary",
-    "swarmId": "Swarm ID",
-    "lastSeen": "Last seen"
-  },
-  "cluster": {
-    "title": "Cluster",
-    "subtitle": "Cluster state and operations",
-    "up": "Provision cluster",
-    "sync": "Sync cluster",
-    "manifest": "Cluster manifest (YAML)",
-    "upHelp": "Installs Docker and initialises Swarm on the declared nodes over SSH.",
-    "syncHelp": "Reconciles the declared nodes against the cluster's current state.",
-    "running": "Running…",
-    "succeeded": "Operation completed",
-    "failed": "Operation failed"
-  },
-  "gitops": {
-    "title": "GitOps",
-    "subtitle": "Continuous sync from a Git repository",
-    "state": "State",
-    "config": "Configuration",
-    "disabled": "GitOps is disabled",
-    "disabledHelp": "Enable it below to sync manifests from a repository.",
-    "enabled": "Enabled",
-    "repository": "Repository",
-    "branch": "Branch",
-    "sshKeyPath": "SSH key path",
-    "sshKeyHelp": "Path on the server to an existing key. No credentials are stored here.",
-    "pollInterval": "Poll interval (seconds)",
-    "manifestPaths": "Manifest paths (comma separated)",
-    "lastCommit": "Last applied commit",
-    "lastSync": "Last sync",
-    "result": "Result",
-    "source": "Configuration source",
-    "sourceDatabase": "Database",
-    "sourceProperties": "Environment",
-    "sourceHelp": "Saving here makes this configuration take precedence over environment variables.",
-    "saved": "Configuration saved",
-    "pending": "Waiting for the first sync"
-  },
-  "audit": {
-    "title": "Audit",
-    "subtitle": "Record of who did what",
-    "empty": "No audit entries",
-    "identity": "Identity",
-    "action": "Action",
-    "resource": "Resource",
-    "result": "Result",
-    "sourceIp": "Source IP"
-  },
-  "users": {
-    "title": "Users",
-    "subtitle": "Who can access this cluster",
-    "empty": "No users",
-    "create": "Create user",
-    "username": "Username",
-    "password": "Password",
-    "role": "Role",
-    "namespaceScope": "Namespace (blank = all)",
-    "active": "Active",
-    "deleteConfirm": "Delete user {{name}}?",
-    "created": "User created"
-  },
   "apply": {
-    "title": "Apply manifest",
-    "subtitle": "Apply rigger.io/v1 YAML straight to the selected namespace",
+    "applied": "{{count}} resource(s) applied",
+    "dryRun": "Validate without applying",
+    "empty": "Write or paste a manifest first",
+    "failed": "Could not apply the manifest",
     "placeholder": "Paste your YAML here…",
     "submit": "Apply",
-    "dryRun": "Validate without applying",
-    "applied": "{{count}} resource(s) applied",
-    "validated": "Manifest is valid ({{count}} resource(s))",
-    "failed": "Could not apply the manifest",
-    "empty": "Write or paste a manifest first"
+    "subtitle": "Apply rigger.io/v1 YAML straight to the selected namespace",
+    "title": "Apply manifest",
+    "validated": "Manifest is valid ({{count}} resource(s))"
+  },
+  "audit": {
+    "action": "Action",
+    "empty": "No audit entries",
+    "identity": "Identity",
+    "resource": "Resource",
+    "result": "Result",
+    "sourceIp": "Source IP",
+    "subtitle": "Record of who did what",
+    "title": "Audit"
+  },
+  "chart": {
+    "collecting": "collecting…",
+    "lastHour": "last hour"
+  },
+  "cluster": {
+    "failed": "Operation failed",
+    "manifest": "Cluster manifest (YAML)",
+    "running": "Running…",
+    "subtitle": "Cluster state and operations",
+    "succeeded": "Operation completed",
+    "sync": "Sync cluster",
+    "syncHelp": "Reconciles the declared nodes against the cluster's current state.",
+    "title": "Cluster",
+    "up": "Provision cluster",
+    "upHelp": "Installs Docker and initialises Swarm on the declared nodes over SSH."
+  },
+  "common": {
+    "actions": "Actions",
+    "all": "All",
+    "appliedBy": "Applied by",
+    "cancel": "Cancel",
+    "close": "Close",
+    "confirm": "Confirm",
+    "created": "Created",
+    "delete": "Delete",
+    "empty": "No data",
+    "error": "Something went wrong",
+    "image": "Image",
+    "kind": "Kind",
+    "loading": "Loading…",
+    "message": "Message",
+    "name": "Name",
+    "namespace": "Namespace",
+    "never": "Never",
+    "no": "No",
+    "none": "None",
+    "refresh": "Refresh",
+    "replicas": "Replicas",
+    "retry": "Retry",
+    "role": "Role",
+    "save": "Save",
+    "search": "Search",
+    "status": "Status",
+    "time": "Time",
+    "type": "Type",
+    "updated": "Updated",
+    "yes": "Yes"
+  },
+  "configmaps": {
+    "deleteConfirm": "Delete ConfigMap {{name}}?",
+    "empty": "No ConfigMaps in this namespace",
+    "keys": "Keys",
+    "subtitle": "Non-sensitive configuration",
+    "title": "ConfigMaps"
+  },
+  "dashboard": {
+    "clusterHealth": "Cluster health",
+    "cpuPerDeployment": "CPU per Deployment",
+    "degraded": "Degraded",
+    "deployments": "Deployments",
+    "healthy": "Healthy",
+    "noActivity": "No activity recorded yet",
+    "nodes": "Active nodes",
+    "recentActivity": "Recent activity",
+    "resources": "Resources",
+    "runningTasks": "Running tasks",
+    "subtitle": "Cluster overview",
+    "title": "Dashboard",
+    "workloadHealth": "Workload health"
+  },
+  "density": {
+    "comfortable": "Comfortable",
+    "compact": "Compact",
+    "label": "Density"
+  },
+  "deployments": {
+    "cpu": "CPU",
+    "deleteConfirm": "Delete deployment {{name}}? Its containers will be stopped.",
+    "empty": "No deployments in this namespace",
+    "hpa": "Autoscaling",
+    "scale": "Scale",
+    "scaleLabel": "Replica count",
+    "scaleTitle": "Scale {{name}}",
+    "subtitle": "Workloads in this namespace",
+    "title": "Deployments"
+  },
+  "errors": {
+    "forbidden": "You don't have permission for this operation",
+    "network": "Could not reach the server",
+    "notFound": "Not found"
   },
   "events": {
     "actor": "Actor"
   },
-  "errors": {
-    "forbidden": "You don't have permission for this operation",
-    "notFound": "Not found",
-    "network": "Could not reach the server"
+  "gitops": {
+    "branch": "Branch",
+    "config": "Configuration",
+    "disabled": "GitOps is disabled",
+    "disabledHelp": "Enable it below to sync manifests from a repository.",
+    "enabled": "Enabled",
+    "lastCommit": "Last applied commit",
+    "lastSync": "Last sync",
+    "manifestPaths": "Manifest paths (comma separated)",
+    "pending": "Waiting for the first sync",
+    "pollInterval": "Poll interval (seconds)",
+    "repository": "Repository",
+    "result": "Result",
+    "saved": "Configuration saved",
+    "source": "Configuration source",
+    "sourceDatabase": "Database",
+    "sourceHelp": "Saving here makes this configuration take precedence over environment variables.",
+    "sourceProperties": "Environment",
+    "sshKeyHelp": "Path on the server to an existing key. No credentials are stored here.",
+    "sshKeyPath": "SSH key path",
+    "state": "State",
+    "subtitle": "Continuous sync from a Git repository",
+    "title": "GitOps"
+  },
+  "health": {
+    "degraded": "Degraded",
+    "down": "Down",
+    "healthy": "Healthy",
+    "na": "—",
+    "unknown": "Not reconciled"
+  },
+  "language": {
+    "label": "Language"
+  },
+  "login": {
+    "expired": "Your session expired. Please sign in again.",
+    "failed": "Invalid username or password",
+    "password": "Password",
+    "submit": "Sign in",
+    "submitting": "Signing in…",
+    "subtitle": "Access your cluster console",
+    "title": "Sign in",
+    "username": "Username"
+  },
+  "logs": {
+    "clear": "Clear",
+    "ended": "End of stream",
+    "failed": "Could not read logs",
+    "filter": "Filter lines",
+    "follow": "Follow",
+    "pause": "Pause",
+    "title": "Logs for {{pod}}",
+    "waiting": "Waiting for output…"
+  },
+  "nav": {
+    "administration": "Administration",
+    "apply": "Apply YAML",
+    "audit": "Audit",
+    "cluster": "Cluster",
+    "configmaps": "ConfigMaps",
+    "dashboard": "Dashboard",
+    "deployments": "Deployments",
+    "gitops": "GitOps",
+    "nodes": "Nodes",
+    "pods": "Pods",
+    "provisioning": "Provisioning",
+    "secrets": "Secrets",
+    "services": "Services",
+    "toggleSidebar": "Toggle navigation",
+    "topology": "Topology",
+    "users": "Users",
+    "workloads": "Workloads"
+  },
+  "nodes": {
+    "empty": "No nodes registered",
+    "ip": "IP address",
+    "lastSeen": "Last seen",
+    "primary": "Primary",
+    "subtitle": "Cluster machines",
+    "swarmId": "Swarm ID",
+    "title": "Nodes"
+  },
+  "pods": {
+    "desired": "Desired",
+    "empty": "No running pods",
+    "logs": "Logs",
+    "node": "Node",
+    "state": "State",
+    "subtitle": "Running instances",
+    "title": "Pods"
   },
   "refresh": {
-    "off": "off",
+    "interval": "Refresh interval",
     "now": "Refresh now",
-    "interval": "Refresh interval"
+    "off": "off"
   },
-  "density": {
-    "label": "Density",
-    "compact": "Compact",
-    "comfortable": "Comfortable"
+  "secrets": {
+    "deleteConfirm": "Delete secret {{name}}?",
+    "empty": "No secrets in this namespace",
+    "redacted": "redacted",
+    "subtitle": "Encrypted at rest and never returned by the API",
+    "title": "Secrets"
+  },
+  "services": {
+    "deleteConfirm": "Delete service {{name}}?",
+    "empty": "No services in this namespace",
+    "ports": "Ports",
+    "subtitle": "Network exposure",
+    "title": "Services"
+  },
+  "theme": {
+    "dark": "Dark",
+    "label": "Theme",
+    "light": "Light",
+    "system": "System"
+  },
+  "topology": {
+    "connections": "Connections",
+    "empty": "Nothing deployed in this namespace yet",
+    "exposes": "exposes",
+    "graph": "Graph",
+    "list": "List",
+    "mounts": "mounts",
+    "noConnections": "No connections",
+    "subtitle": "How this namespace's workloads connect",
+    "title": "Topology"
+  },
+  "user": {
+    "allNamespaces": "all namespaces",
+    "signOut": "Sign out"
+  },
+  "users": {
+    "active": "Active",
+    "create": "Create user",
+    "created": "User created",
+    "deleteConfirm": "Delete user {{name}}?",
+    "empty": "No users",
+    "namespaceScope": "Namespace (blank = all)",
+    "password": "Password",
+    "role": "Role",
+    "subtitle": "Who can access this cluster",
+    "title": "Users",
+    "username": "Username"
   }
 }
