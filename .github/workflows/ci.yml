@@ -28,9 +28,9 @@ jobs:
       matrix:
         java: ['21', '25']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
@@ -52,9 +52,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -63,7 +63,7 @@ jobs:
       # frontend-maven-plugin downloads Node itself; caching npm's own cache is what makes
       # `npm ci` fast. Caching node_modules would be pointless — npm ci wipes it.
       - name: Cache npm cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.npm
           key: npm-${{ hashFiles('rigger-console/package-lock.json') }}
@@ -110,7 +110,7 @@ jobs:
           cp rigger-cli/target/riggerctl.jar staging/riggerctl.jar
           ls -l staging
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: jars
           path: staging
@@ -124,14 +124,14 @@ jobs:
     timeout-minutes: 30
     needs: package
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: jars
           path: artifacts
@@ -290,7 +290,7 @@ jobs:
 
       - name: Upload diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integration-diagnostics
           path: |
