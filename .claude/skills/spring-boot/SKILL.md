@@ -103,6 +103,11 @@ mvn clean verify                      # whole reactor; any JDK 21+, no flags
 cd rigger-server && RIGGER_ATTACH_EXISTING_SWARM=true RIGGER_ADMIN_PASSWORD=<pw> mvn spring-boot:run
 ```
 
+CI (`.github/workflows/ci.yml`) runs the reactor on JDK 21 and 25, asserts the console is inside the
+jar, and drives a real Swarm plus a browser walkthrough. When you fix a runtime bug, add the
+assertion that would have caught it — every check in the integration job is there because something
+shipped broken.
+
 Then exercise the change end-to-end against the live Swarm — login, apply, observe reconciliation,
 delete. Reconciliation changes especially need a convergence check: watch that the Swarm object's
 version stops incrementing once in sync, since a hash mismatch produces an endless update loop that

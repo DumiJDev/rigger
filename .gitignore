@@ -10,6 +10,9 @@
 # Node toolchain downloaded by frontend-maven-plugin (platform-specific)
 rigger-console/node
 
+# Screenshots written by the browser walkthrough
+e2e/shots
+
 # Local runtime state
 *.db
 *.db-shm

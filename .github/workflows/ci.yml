@@ -1,0 +1,299 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Short and explicit so a failure is about the code, not about a weak default tripping a guard.
+  RIGGER_ADMIN_PASSWORD: ci-admin-password
+  RIGGER_JWT_KEY: ci-jwt-signing-key-at-least-32-chars-long
+
+jobs:
+  # Backend only, on two JDKs. The matrix is the point: this project deliberately dropped
+  # StructuredTaskScope and --enable-preview because preview class files bind to one JDK major
+  # version and broke the build when the default JDK moved. Building on 21 and 25 keeps that honest.
+  backend:
+    name: Backend (JDK ${{ matrix.java }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ['21', '25']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+
+      - name: Verify reactor without the UI
+        run: mvn -B clean verify -Dui.skip=true
+
+      # The escape hatch must keep working: with no rigger-console/dist present, the resource root
+      # is skipped with a warning and the build still succeeds.
+      - name: Assert -Dui.skip=true needs no UI output
+        run: |
+          test ! -d rigger-console/dist || { echo "dist should not exist in this job"; exit 1; }
+          echo "ok: reactor verified with no console build present"
+
+  # Full artifact: builds the Angular console through Maven and proves the jar is actually complete.
+  package:
+    name: Package (UI embedded)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # frontend-maven-plugin downloads Node itself; caching npm's own cache is what makes
+      # `npm ci` fast. Caching node_modules would be pointless — npm ci wipes it.
+      - name: Cache npm cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('rigger-console/package-lock.json') }}
+          restore-keys: npm-
+
+      - name: Package (builds the console)
+        run: mvn -B clean package -DskipTests
+
+      # This is the regression that prompted the CI: the UI build used to be a manual step, so a
+      # fresh clone produced a jar with no UI and nothing noticed. The nested i18n asset is checked
+      # specifically because a pattern-based SPA fallback once served index.html in its place.
+      - name: Assert the console is inside the jar
+        run: |
+          JAR=rigger-server/target/rigger-server-1.0.0-SNAPSHOT.jar
+          test -f "$JAR" || { echo "missing $JAR"; exit 1; }
+          for entry in \
+            BOOT-INF/classes/static/ui/index.html \
+            BOOT-INF/classes/static/ui/i18n/pt.json \
+            BOOT-INF/classes/static/ui/i18n/en.json
+          do
+            unzip -l "$JAR" | grep -q "$entry" || { echo "jar is missing $entry"; exit 1; }
+          done
+          echo "ok: console embedded ($(unzip -l "$JAR" | grep -c 'static/ui/') entries)"
+
+      # A remote webfont would make the build depend on the network and make every operator's
+      # browser call a third party — neither is acceptable for a console that may run air-gapped.
+      - name: Assert no remote font or CDN reference
+        run: |
+          if grep -rIl "fonts.googleapis.com\|fonts.gstatic.com" rigger-console/dist; then
+            echo "remote font reference found in the built console"; exit 1
+          fi
+          echo "ok: no remote font references"
+
+      - name: Console unit tests
+        working-directory: rigger-console
+        run: npx ng test --watch=false
+
+      # Staged flat so the consuming job doesn't depend on how upload-artifact derives its
+      # common path prefix from multiple inputs.
+      - name: Stage jars
+        run: |
+          mkdir -p staging
+          cp rigger-server/target/rigger-server-1.0.0-SNAPSHOT.jar staging/rigger-server.jar
+          cp rigger-cli/target/riggerctl.jar staging/riggerctl.jar
+          ls -l staging
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jars
+          path: staging
+          retention-days: 7
+
+  # Runtime behaviour against a real Swarm. Every serious defect in this project was invisible to
+  # compilation and unit tests and only appeared here.
+  integration:
+    name: Integration (Swarm + CLI + browser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: package
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: jars
+          path: artifacts
+
+      - name: Initialise Swarm
+        run: |
+          docker swarm init --advertise-addr 127.0.0.1
+          docker info --format '{{.Swarm.LocalNodeState}}'
+
+      - name: Start the server from the fat jar
+        run: |
+          RIGGER_ATTACH_EXISTING_SWARM=true \
+          nohup java -jar artifacts/rigger-server.jar \
+            > server.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sk https://localhost:7433/actuator/health | grep -q UP; then
+              echo "server up"; exit 0
+            fi
+            sleep 3
+          done
+          echo "server never became healthy"; tail -80 server.log; exit 1
+
+      # Serving the UI is resolved by file existence, and the nested i18n asset must come back as
+      # JSON rather than the SPA shell.
+      - name: Assert the UI serves correctly from the jar
+        run: |
+          fail=0
+          for path in /ui/ /ui/topology /ui/i18n/pt.json; do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' "https://localhost:7433$path")
+            echo "$path -> $code"
+            [ "$code" = "200" ] || fail=1
+          done
+          curl -sk https://localhost:7433/ui/i18n/pt.json | head -c 1 | grep -q '{' \
+            || { echo "i18n did not return JSON"; fail=1; }
+          exit $fail
+
+      - name: CLI flow (apply, pods, logs framing, delete)
+        run: |
+          set -e
+          CLI="java -jar artifacts/riggerctl.jar"
+          $CLI init --server https://localhost:7433 --insecure
+          $CLI login -u admin -p "$RIGGER_ADMIN_PASSWORD" --insecure
+
+          cat > /tmp/ci-manifests.yaml <<'YAML'
+          apiVersion: rigger.io/v1
+          kind: ConfigMap
+          metadata:
+            name: ci-cm
+            namespace: default
+          spec:
+            data:
+              GREETING: "ci"
+          ---
+          apiVersion: rigger.io/v1
+          kind: Deployment
+          metadata:
+            name: ci-web
+            namespace: default
+          spec:
+            replicas: 1
+            selector:
+              app: ci-web
+            image: nginx:alpine
+            configMapRefs:
+              - ci-cm
+          ---
+          apiVersion: rigger.io/v1
+          kind: Service
+          metadata:
+            name: ci-web-svc
+            namespace: default
+          spec:
+            type: LoadBalancer
+            selector:
+              app: ci-web
+            ports:
+              - port: 18080
+                targetPort: 80
+                protocol: TCP
+          YAML
+
+          # A dry run must change nothing — it used to persist and reconcile for real.
+          $CLI apply -f /tmp/ci-manifests.yaml -n default --dry-run -i
+          if $CLI get deployments -n default -i | grep -q ci-web; then
+            echo "dry run created resources"; exit 1
+          fi
+          echo "ok: dry run changed nothing"
+
+          $CLI apply -f /tmp/ci-manifests.yaml -n default -i
+
+          # Wait for reconciliation onto Swarm, then for a running task.
+          for i in $(seq 1 40); do
+            docker service ls --format '{{.Replicas}}' | grep -q '^[1-9]' && break
+            sleep 5
+          done
+          docker service ls
+
+          $CLI get pods -n default -i
+          POD=$($CLI get pods -n default -i | awk 'NR>2 {print $1; exit}')
+
+          # riggerctl reads raw lines. When the two log framings shared one path, content
+          # negotiation handed the CLI the SSE variant and it started printing "data:" prefixes.
+          $CLI logs "$POD" -n default -i > /tmp/cli-logs.txt || true
+          head -3 /tmp/cli-logs.txt
+          if grep -q '^data:' /tmp/cli-logs.txt; then
+            echo "CLI received SSE framing instead of raw lines"; exit 1
+          fi
+          test -s /tmp/cli-logs.txt || { echo "CLI logs were empty"; exit 1; }
+          echo "ok: CLI log framing is raw"
+
+      - name: Assert reconciliation converges
+        run: |
+          # A spec-hash mismatch once made every 15s cycle re-update the service forever, which
+          # looks perfectly healthy in the logs. Only a version index that stops moving proves it
+          # converged. Requiring three consecutive identical samples avoids false-failing while a
+          # rolling update is still legitimately settling.
+          svc=rigger-default-ci-web
+          stable=0
+          prev=""
+          for i in $(seq 1 16); do
+            cur=$(docker service inspect "$svc" --format '{{.Version.Index}}')
+            if [ "$cur" = "$prev" ]; then stable=$((stable+1)); else stable=0; fi
+            echo "sample $i: version=$cur (stable streak=$stable)"
+            [ "$stable" -ge 2 ] && { echo "ok: reconciliation converged at version $cur"; exit 0; }
+            prev=$cur
+            sleep 15
+          done
+          echo "service version never stopped climbing; reconciliation is not converging"
+          exit 1
+
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Browser walkthrough
+        working-directory: e2e
+        env:
+          BASE: https://localhost:7433
+          ADMIN_PASSWORD: ${{ env.RIGGER_ADMIN_PASSWORD }}
+        run: node console.mjs
+
+      - name: Delete resources through the API
+        if: always()
+        run: |
+          CLI="java -jar artifacts/riggerctl.jar"
+          for r in "deployment ci-web" "service ci-web-svc" "configmap ci-cm"; do
+            echo y | $CLI delete $r -n default -i || true
+          done
+          for i in $(seq 1 30); do
+            [ -z "$(docker service ls -q)" ] && [ -z "$(docker config ls -q)" ] && break
+            sleep 4
+          done
+          echo "services left: $(docker service ls -q | wc -l), configs left: $(docker config ls -q | wc -l)"
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-diagnostics
+          path: |
+            server.log
+            e2e/shots
+          retention-days: 7

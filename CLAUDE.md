@@ -103,6 +103,34 @@ curl -sk -X POST https://localhost:7433/api/v1/auth/login \
 
 Follow `QUICK-START.md` for the full CLI flow (`riggerctl init --insecure` → `login` → `apply`).
 
+## CI
+
+`.github/workflows/ci.yml`, three jobs:
+
+- **backend** — `mvn clean verify -Dui.skip=true` on JDK 21 *and* 25. The matrix is the point: this
+  project dropped `StructuredTaskScope`/`--enable-preview` precisely because preview class files bind
+  to one JDK major version, and a regression there would only show on the other JDK.
+- **package** — full `mvn clean package`, then asserts the jar actually contains
+  `static/ui/index.html` and the nested `i18n/*.json`, and that the built console references no
+  remote font/CDN. Runs the console's vitest suite. This job exists because the UI build used to be
+  a manual step: a fresh clone produced a UI-less jar and nothing noticed.
+- **integration** — `docker swarm init`, server started **from the fat jar**, then: UI served
+  correctly (including `i18n/pt.json` coming back as JSON, not the SPA shell), a `riggerctl` flow
+  (dry run changes nothing → apply → pods → logs are raw lines, not SSE `data:` frames → delete),
+  a convergence check that the Swarm service's version index stops climbing, and the browser
+  walkthrough in `e2e/console.mjs`.
+
+Each assertion in that list corresponds to a defect that actually shipped and was invisible to
+compilation and unit tests. Keep it that way: when a runtime bug is found, add the assertion that
+would have caught it.
+
+The browser harness lives in `e2e/` with its own `package.json`, deliberately **not** in
+`rigger-console` — `npm ci` there runs during every `mvn package`, and Playwright has no business
+slowing that down.
+
+What CI does **not** cover: multi-node clusters (Swarm is single-node on the runner), SSH
+provisioning (`cluster up`/`sync` are never exercised), and HPA scaling under load.
+
 ## Architecture decisions
 
 - **Auth model: JWT + username/password, not mTLS.** The README originally described a

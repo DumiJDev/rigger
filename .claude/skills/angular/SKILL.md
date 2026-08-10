@@ -108,6 +108,10 @@ cd rigger-console && npm ci && npm run build     # must emit into static/ui
 npm start                                        # dev server with API proxy
 ```
 
+CI runs `e2e/console.mjs` (Playwright) against a server started from the fat jar. It asserts real
+things — i18n resolves, SSE logs arrive, a dry run creates nothing, the theme toggle flips, the
+browser console is clean — and exits non-zero on any failure. Add a check there when you fix a UI bug.
+
 Then click through against a real backend: login, switch namespace, apply a manifest, watch
 topology, stream logs, toggle theme and locale. Check the browser console is clean — a 404 on a
 lazy chunk or a missing translation key won't fail the build.
