@@ -1,0 +1,92 @@
+<ng-container *transloco="let t">
+  <r-page-header [title]="t('dashboard.title')" [subtitle]="t('dashboard.subtitle')">
+    <button type="button" class="btn btn-ghost" (click)="load()">{{ t('common.refresh') }}</button>
+  </r-page-header>
+
+  <r-data-state [loading]="loading()" [error]="error() ? t(error()!) : null" (retry)="load()">
+    <!-- Totals -->
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      @if (metrics(); as m) {
+        <div class="surface p-4">
+          <div class="muted text-xs font-medium uppercase tracking-wide">{{ t('dashboard.nodes') }}</div>
+          <div class="mt-2 text-2xl font-semibold">{{ m.activeNodes }} / {{ m.totalNodes }}</div>
+        </div>
+        <div class="surface p-4">
+          <div class="muted text-xs font-medium uppercase tracking-wide">
+            {{ t('dashboard.runningTasks') }}
+          </div>
+          <div class="mt-2 text-2xl font-semibold">{{ m.runningTasks }} / {{ m.desiredTasks }}</div>
+        </div>
+        <div class="surface p-4">
+          <div class="muted text-xs font-medium uppercase tracking-wide">
+            {{ t('dashboard.deployments') }}
+          </div>
+          <div class="mt-2 text-2xl font-semibold">{{ m.deployments }}</div>
+        </div>
+        <div class="surface p-4">
+          <div class="muted text-xs font-medium uppercase tracking-wide">
+            {{ t('dashboard.resources') }}
+          </div>
+          <div class="mt-2 text-2xl font-semibold">
+            {{ m.services + m.configMaps + m.secrets }}
+          </div>
+          <div class="muted mt-1 text-xs">
+            {{ m.services }} · {{ m.configMaps }} · {{ m.secrets }}
+          </div>
+        </div>
+      }
+    </div>
+
+    <!-- Workload health + activity -->
+    <div class="mt-6 grid gap-4 lg:grid-cols-5">
+      <section class="surface p-4 lg:col-span-2">
+        <h2 class="text-sm font-semibold">{{ t('dashboard.workloadHealth') }}</h2>
+        @if (topology()?.nodes?.length) {
+          <div class="mt-4 space-y-3">
+            @for (row of [
+              { key: 'healthy', count: healthCounts().healthy },
+              { key: 'degraded', count: healthCounts().degraded },
+              { key: 'down', count: healthCounts().down },
+              { key: 'unknown', count: healthCounts().unknown }
+            ]; track row.key) {
+              @if (row.count > 0) {
+                <div class="flex items-center justify-between">
+                  <r-status-badge [status]="row.key" [label]="t('health.' + row.key)" />
+                  <span class="text-sm font-medium">{{ row.count }}</span>
+                </div>
+              }
+            }
+          </div>
+          <a routerLink="/topology" class="btn btn-ghost mt-4 w-full justify-center">
+            {{ t('nav.topology') }}
+          </a>
+        } @else {
+          <p class="muted mt-4 text-sm">{{ t('topology.empty') }}</p>
+        }
+      </section>
+
+      <section class="surface p-4 lg:col-span-3">
+        <h2 class="text-sm font-semibold">{{ t('dashboard.recentActivity') }}</h2>
+        @if (events().length) {
+          <ul class="mt-3 divide-y" style="border-color: var(--border-subtle)">
+            @for (e of events(); track e.id) {
+              <li class="flex items-start gap-3 py-2.5">
+                <span class="muted w-24 shrink-0 text-xs tabular-nums">
+                  {{ e.occurredAt | date: 'HH:mm:ss' }}
+                </span>
+                <div class="min-w-0 flex-1">
+                  <div class="truncate text-sm">{{ e.message }}</div>
+                  <div class="muted mt-0.5 truncate text-xs">
+                    {{ e.type }}@if (e.resourceName) { · {{ e.resourceKind }}/{{ e.resourceName }} }
+                  </div>
+                </div>
+              </li>
+            }
+          </ul>
+        } @else {
+          <p class="muted mt-4 text-sm">{{ t('dashboard.noActivity') }}</p>
+        }
+      </section>
+    </div>
+  </r-data-state>
+</ng-container>

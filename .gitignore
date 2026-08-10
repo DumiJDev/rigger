@@ -7,8 +7,11 @@
 **/dist
 **/node_modules
 
-# Generated UI bundle copied into the server jar — rebuild with `npm run build`
-rigger-server/src/main/resources/static/ui
+# Node toolchain downloaded by frontend-maven-plugin (platform-specific)
+rigger-console/node
+
+# Screenshots written by the browser walkthrough
+e2e/shots
 
 # Local runtime state
 *.db

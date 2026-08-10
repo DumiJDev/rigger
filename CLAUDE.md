@@ -2,7 +2,7 @@
 
 Guidance for working in this repository. Rigger is a Docker Swarm operator that exposes
 Kubernetes-like primitives (Deployment, Service, ConfigMap, Secret, HPA) with RBAC, GitOps,
-and a React UI, built as a Java 21 / Spring Boot 3.3.5 Maven multi-module reactor.
+and an Angular console, built as a Java 21+ / Spring Boot 4.1 Maven multi-module reactor.
 
 ## Module map
 
@@ -10,38 +10,69 @@ and a React UI, built as a Java 21 / Spring Boot 3.3.5 Maven multi-module reacto
 |---|---|
 | `rigger-core` | Domain records (DeploymentSpec, ServiceSpec, ClusterSpec, RiggerIdentity, …), exceptions. No framework deps. Most complete/stable module. |
 | `rigger-events` | Typed event records + `RiggerEventBus` (wraps Spring's `ApplicationEventPublisher`). |
-| `rigger-manifest` | Parses/validates `rigger.io/v1` YAML manifests (`ManifestParser`, `ManifestValidator`), plus `ComposeConverter` for docker-compose input (not yet wired into apply path — see Known Gaps). |
+| `rigger-manifest` | Parses/validates `rigger.io/v1` YAML manifests (`ManifestParser`, `ManifestValidator`), plus `ComposeConverter`, which `WorkloadController.apply()` routes docker-compose input through. |
 | `rigger-schema` | JSON Schema (draft 2020-12) definitions per kind, validated via `ManifestSchemaValidator` before domain validation. Deliberately framework-free — `ManifestSchemaValidator` is registered as a Spring bean by `rigger-api`'s `ApiAutoConfiguration`, not annotated itself. |
-| `rigger-swarm-adapter` | Talks to Docker Swarm via **docker-java 3.3.6** (not raw HTTP). `ServiceAdapter`/`NodeAdapter`/`ConfigAdapter`/`SecretAdapter`. Contains a legacy hand-rolled `swarm/model/*` package predating the docker-java migration — still referenced by `ReconcilePlan` in `rigger-operator`; `DockerJavaReconcilePlan` is the real replacement (cleanup candidate, see Known Gaps). |
+| `rigger-swarm-adapter` | Talks to Docker Swarm via **docker-java 3.7.1** (not raw HTTP). `ServiceAdapter`/`NodeAdapter`/`ConfigAdapter`/`SecretAdapter`. Note that docker-java has its own `SwarmNode`/`SwarmNodeSpec` types — the adapters use those, not hand-rolled equivalents. |
 | `rigger-provisioner` | SSH-based cluster provisioning (Apache Mina SSHD) — Docker install, `docker swarm init/join`, `ClusterOrchestrator` for `cluster up`/`sync`. |
 | `rigger-security` | Auth (`UserStore`, `JwtTokenService`, `RiggerAuthenticationFilter`), RBAC (`RbacPolicyEngine`), secret encryption (`SecretEncryptor`, AES-256-GCM), audit (`AuditService`). |
 | `rigger-store` | Spring Data JPA + SQLite (WAL mode), Flyway migrations in `db/migration/`. |
-| `rigger-operator` | Reconciliation loop (virtual threads via `StructuredTaskScope`), HPA autoscaler. |
+| `rigger-operator` | Reconciliation loop (virtual threads via `Executors.newVirtualThreadPerTaskExecutor()`) running Deployment/Service/ConfigMap/Secret controllers in parallel each cycle, plus the HPA autoscaler. `SecretController` decrypts and pushes Secret values into Docker Secrets; create-only, same maturity as `ConfigMapController` (see Known Gaps). |
 | `rigger-gitops` | JGit-based poll-and-apply agent (`GitOpsAgent`), bypasses HTTP/RBAC by design (trusted internal path via `ManifestApplyService`). |
 | `rigger-api` | Spring MVC REST layer (`WorkloadController`, `ClusterController`, `AuthController`, `UserController`, `AuditController`). |
 | `rigger-cli` | `riggerctl` — Picocli-based CLI. |
-| `rigger-server` | Spring Boot fat-jar entry point (`RiggerApplication`); embeds the built `rigger-ui` as static resources. |
-| `rigger-ui` | React 18 + TypeScript + Vite + Tailwind. Built separately (npm), output copied to `rigger-server/src/main/resources/static/ui/`. |
+| `rigger-server` | Spring Boot fat-jar entry point (`RiggerApplication`); embeds the built console as static resources. |
+| `rigger-console` | Angular 22 + Tailwind 4 + Transloco (pt/en) + dark mode. Built into `rigger-console/dist/` and copied into the server jar by Maven — see Build & run. `ng serve` for UI work. See the `angular` skill. |
 
 ## Build & run
 
-### Java version — important
+### Java version
 
-The project **requires JDK 21** with `--enable-preview` (uses `StructuredTaskScope`, a JDK 21
-preview API, in `rigger-operator`'s `ReconciliationLoop`). If your default JDK is newer (e.g. 24/25),
-preview class files from a different major version will fail to load. Point `JAVA_HOME` at a JDK 21
-install for every Maven invocation:
+Builds on **any JDK 21+** — no `--enable-preview`, no pinned `JAVA_HOME`. `ReconciliationLoop`
+used to run its controllers via `StructuredTaskScope` (a JDK 21 *preview* API), which forced
+`--enable-preview` and broke outright whenever the machine's default JDK moved on (preview class
+files are tied to one specific major version). It now uses
+`Executors.newVirtualThreadPerTaskExecutor()` + `invokeAll` — same virtual-threads-in-parallel
+behaviour, no preview surface. Don't reintroduce preview APIs without a deliberate decision.
 
-```bash
-export JAVA_HOME=/path/to/jdk-21
-```
+The root `pom.xml`'s `maven-compiler-plugin` also sets `<parameters>true</parameters>` — required
+for Spring MVC's implicit `@PathVariable`/`@RequestParam` name binding (e.g.
+`@PathVariable String namespace` without an explicit `@PathVariable("namespace")`). Without it,
+any endpoint relying on implicit parameter names throws at request time, not at compile time —
+easy to miss until you actually call that specific endpoint.
 
 ### Full build
 
 ```bash
-mvn clean verify                     # all 14 modules, compiles + tests
-cd rigger-ui && npm install && npm run build   # output goes to rigger-server/.../static/ui/ automatically
+mvn clean verify                     # all 14 modules + builds the console into the jar
+mvn clean verify -Dui.skip=true      # backend only — skips npm entirely
 ```
+
+### How the console gets into the jar
+
+`rigger-server`'s pom runs the Angular build (frontend-maven-plugin: `install-node-and-npm`,
+`npm ci`, `npm run build` — all at `generate-resources`) and declares `rigger-console/dist` as a
+**resource root** with `targetPath=static/ui`, so `maven-resources-plugin` copies it into
+`target/classes` at `process-resources`. `UiResourceConfig` then serves it from
+`classpath:/static/ui/`. Nothing is generated inside `src/`.
+
+Details that are load-bearing, and were each found the hard way:
+
+- **`-Dui.skip=true` for backend iteration**, especially with `spring-boot:run`. That goal forks the
+  lifecycle up to `test-compile`, which *includes* `generate-resources` — so without the flag every
+  restart re-runs `npm ci` (minutes on a Windows-mounted path). With the flag and no `clean`, the
+  UI already in `target/classes` keeps being served. Working on the UI itself? Use `ng serve`, which
+  proxies `/api` to the running server via `proxy.conf.json`.
+- **The copy is a `<resources>` entry, not a `copy-resources` execution.** Only `<resources>` is
+  honoured by IDE incremental builds; with an execution, `mvn clean` + Run in the IDE gives a server
+  with no UI. Declaring the block also means `src/main/resources` must be re-declared explicitly.
+- **Resource filtering must stay off.** Maven's default `@...@` delimiters would mangle Angular CSS
+  (`@media`, `@layer`) and minified JS (`${...}`). The non-filtered-extension defaults cover
+  `ico`/`png` but not `js`/`css`/`json`/`html`.
+- **The Node toolchain installs to `rigger-console/node/`, not under `target/`.** Under `target/`,
+  `mvn clean` fails outright — deleting Node's deeply nested npm tree on a Windows mount reports
+  "Directory not empty" and needs several passes. Consequence to remember: that directory is
+  platform-specific, so delete it if you ever build the same checkout from both WSL and Windows.
+- **`node.version` needs its `v` prefix** (`v24.15.0`); the installer rejects it otherwise.
 
 ### Run the server locally (dev)
 
@@ -56,19 +87,49 @@ keytool -genkeypair -alias rigger -keyalg RSA -keysize 2048 -storetype PKCS12 \
 
 cd rigger-server
 RIGGER_ATTACH_EXISTING_SWARM=true \
-mvn spring-boot:run -Dspring-boot.run.jvmArguments="--enable-preview"
+mvn spring-boot:run
 ```
 
 Server comes up on `https://localhost:7433`. First boot auto-generates `RIGGER_MASTER_KEY`
-(logged once, ephemeral) and bootstraps an `admin`/`admin` user (dev only — see Security Model).
+(logged once, ephemeral) and, if `RIGGER_ADMIN_PASSWORD` isn't set, a one-time random admin
+password — read it from the startup log (`WARN ... admin / <password>`); see Security Model.
+With `SPRING_PROFILES_ACTIVE=prod`, the server refuses to start instead of generating one.
 
 ```bash
 curl -sk https://localhost:7433/actuator/health
 curl -sk -X POST https://localhost:7433/api/v1/auth/login \
-  -H "Content-Type: application/json" -d '{"username":"admin","password":"admin"}'
+  -H "Content-Type: application/json" -d '{"username":"admin","password":"<from-log>"}'
 ```
 
 Follow `QUICK-START.md` for the full CLI flow (`riggerctl init --insecure` → `login` → `apply`).
+
+## CI
+
+`.github/workflows/ci.yml`, three jobs:
+
+- **backend** — `mvn clean verify -Dui.skip=true` on JDK 21 *and* 25. The matrix is the point: this
+  project dropped `StructuredTaskScope`/`--enable-preview` precisely because preview class files bind
+  to one JDK major version, and a regression there would only show on the other JDK.
+- **package** — full `mvn clean package`, then asserts the jar actually contains
+  `static/ui/index.html` and the nested `i18n/*.json`, and that the built console references no
+  remote font/CDN. Runs the console's vitest suite. This job exists because the UI build used to be
+  a manual step: a fresh clone produced a UI-less jar and nothing noticed.
+- **integration** — `docker swarm init`, server started **from the fat jar**, then: UI served
+  correctly (including `i18n/pt.json` coming back as JSON, not the SPA shell), a `riggerctl` flow
+  (dry run changes nothing → apply → pods → logs are raw lines, not SSE `data:` frames → delete),
+  a convergence check that the Swarm service's version index stops climbing, and the browser
+  walkthrough in `e2e/console.mjs`.
+
+Each assertion in that list corresponds to a defect that actually shipped and was invisible to
+compilation and unit tests. Keep it that way: when a runtime bug is found, add the assertion that
+would have caught it.
+
+The browser harness lives in `e2e/` with its own `package.json`, deliberately **not** in
+`rigger-console` — `npm ci` there runs during every `mvn package`, and Playwright has no business
+slowing that down.
+
+What CI does **not** cover: multi-node clusters (Swarm is single-node on the runner), SSH
+provisioning (`cluster up`/`sync` are never exercised), and HPA scaling under load.
 
 ## Architecture decisions
 
@@ -80,84 +141,162 @@ Follow `QUICK-START.md` for the full CLI flow (`riggerctl init --insecure` → `
   `identities.cert_serial` column are unused placeholders. Real mTLS is out of scope (see
   Known Gaps / Out of Scope).
 - **RBAC enforcement**: `RbacPolicyEngine.authorize(ctx, action, kind)` called explicitly at the
-  top of each controller method. A declarative `@RiggerAuthorize` + `RbacAspect` AOP mechanism
-  exists in `rigger-security` but is currently unused dead code — a future pass should either
-  wire it up as the single enforcement mechanism (recommended, before adding more endpoints) or
-  remove it.
-- **Secrets**: `SecretSpec.data` values are base64 in the YAML manifest. `SecretEncryptor`
-  (AES-256-GCM, in `rigger-security`) is fully implemented but **not yet wired** into the
-  apply/read path — `WorkloadController.apply()` currently persists Secret specs unencrypted
-  into `resources.spec_json`. This is the top security gap to close next (see Known Gaps).
+  top of each controller method — this is the one and only enforcement mechanism. An AOP-based
+  `@RiggerAuthorize` alternative was attempted and **deleted**: it required `RiggerContext` to be
+  a method *parameter* (controllers build it internally from the request) and a single resource
+  kind fixed at compile time (`WorkloadController.apply()` handles a mixed batch of kinds per
+  call). Any new controller method touching a resource MUST start with an explicit
+  `rbac.authorize(...)` call — there is no compiler-enforced safety net for this, only convention.
+- **Secrets**: `SecretSpec.data` values are base64 in the YAML manifest. `WorkloadController.apply()`
+  encrypts each value with `SecretEncryptor` (AES-256-GCM) before persisting to
+  `resources.spec_json` — the DB only ever holds ciphertext. Reads (API/CLI/UI) always show
+  `{"keys":"redacted"}`, never decrypt. The one legitimate decryption point is
+  `rigger-operator`'s `SecretController`, which decrypts and pushes the real value into a Docker
+  Secret via `SecretAdapter` (Swarm needs the actual usable value — it has its own independent
+  at-rest encryption, unrelated to Rigger's). Audit log entries for Secret applies record
+  `"<redacted-secret-data>"` instead of the spec JSON, encrypted or not.
+- **Spring Boot 4 / Jackson**: on Boot 4, `spring-boot-starter-jackson` still ships **Jackson 2**
+  (`com.fasterxml.jackson`, 2.21.x) — that's what Spring MVC serialises with, so the `@JsonProperty`
+  annotations on the domain records stay as-is. Jackson 3 (`tools.jackson`, 3.x) is also on the
+  classpath, pulled in transitively by Flyway 13 for its own internal use; the two coexist because
+  they occupy different package namespaces. Don't "modernise" the domain records to `tools.jackson`
+  imports — that would silently detach them from the converter Spring actually uses.
+- **Flyway needs the Boot starter, not just `flyway-core`**: Boot 4 moved Flyway auto-configuration
+  out of `spring-boot-autoconfigure` into a dedicated module, so `rigger-server` depends on
+  `spring-boot-starter-flyway`. With bare `flyway-core` the migrations silently never run and
+  startup then dies on Hibernate schema validation (`missing table [audit_log]`) against an empty
+  database — a confusing failure that points at JPA rather than the real cause.
 - **Database**: SQLite via Spring Data JPA + Flyway, WAL mode. Hibernate needs
   `org.hibernate.community.dialect.SQLiteDialect` (from `hibernate-community-dialects`,
   added to `rigger-server`'s pom) since SQLite has no first-party Hibernate dialect.
   JPA entities mapping to `TEXT`/`INTEGER`-typed SQLite columns (timestamps, booleans) must
   set `columnDefinition` explicitly to match — Hibernate's schema *validate* mode is strict
   about this even though SQLite itself is dynamically typed.
-- **UI build integration**: `rigger-ui`'s Vite config writes directly to
-  `rigger-server/src/main/resources/static/ui/` — there is no separate copy step. `rigger-ui`
-  is mid-migration from JS to TS (`allowJs: true` in `tsconfig.json`); `App.tsx`/`main.tsx` are
-  canonical, pages remain `.jsx` for now.
+- **Console**: Angular 22 (standalone + signals), served at `/ui/` from the same jar and origin as
+  the API — which is why no CORS configuration exists anywhere and shouldn't be added. `UiController`
+  forwards route-shaped paths to `index.html` for deep links, but deliberately excludes any segment
+  containing a dot: a blanket `/ui/**` forward also matches `index.html` and every hashed asset, so
+  the target re-matches the mapping and recurses until the request dies with a StackOverflowError.
+  Auth is the same JWT the CLI uses, held in `localStorage`; there is no refresh endpoint, so a 401
+  means re-login rather than a silent renewal. The console reads `GET /auth/permissions` to decide
+  which actions to offer instead of hard-coding a copy of the RBAC table.
 
 ## Security model (current state)
 
-- **Passwords**: hashed with a single hardcoded static salt + SHA-256 (`UserStore`) — **known
-  weak**, scheduled for a BCrypt replacement. Do not treat current hashes as secure.
-- **Users**: in-memory only (`ConcurrentHashMap` in `UserStore`), despite an `identities` table
-  existing in the Flyway schema — all non-bootstrap users are lost on restart. Needs a JPA-backed
-  `IdentityRepository` (see Known Gaps).
-- **Bootstrap admin**: defaults to `admin`/`admin` with just a warning log. Override via
-  `RIGGER_ADMIN_PASSWORD`. Do not run with the default in anything but local dev.
-- **JWT signing key**: `RIGGER_JWT_KEY` env var; falls back to an insecure default and silently
-  zero-pads short keys rather than rejecting them. Always set an explicit ≥32-byte key outside dev.
-- **Secrets at rest**: **not actually encrypted yet** despite `SecretEncryptor` existing — see
-  Architecture Decisions above. Treat Secret resources as plaintext-equivalent (base64) until
-  this is wired up.
-- **SSH provisioning**: `RiggerSshClient` accepts any host key unconditionally (no verification) —
-  MITM risk during `cluster up`/`sync`. Needs trust-on-first-use host-key pinning.
-- **Docker install channel**: `DockerInstaller` interpolates `DockerSpec.channel()` directly into
-  a shell command run over SSH — needs allowlist validation before use.
-- **Audit log**: append-only by convention (`AuditService` only calls `.save()`), not enforced at
-  the DB layer. Currently passes Secret spec JSON as-is into `afterState`/`beforeState` —
-  redaction needs to land alongside the secret-encryption fix.
+- **Passwords**: BCrypt (`PasswordEncoder` bean in `SecurityAutoConfiguration`, injected into
+  `UserStore`) — per-user random salt. Pre-existing SHA-256+static-salt hashes were never
+  migrated (clean cutover; there were no real users yet) — anyone created before this change
+  must be recreated.
+- **Users**: persisted via JPA (`IdentityRepository`/`IdentityEntity`, backed by the
+  `identities` table + a `password_hash` column added in `V3__identities_password_hash.sql`).
+  Survive restarts; verified by creating a user, restarting the server, and confirming login
+  still works.
+- **Bootstrap admin**: with `RIGGER_ADMIN_PASSWORD` unset — fails startup under
+  `SPRING_PROFILES_ACTIVE=prod`; otherwise generates a random password, logs it once
+  (`WARN ... admin / <password>`), never persists it in plaintext anywhere. Set
+  `RIGGER_ADMIN_PASSWORD` explicitly for any environment that matters.
+- **JWT signing key**: `RIGGER_JWT_KEY` env var, validated in `JwtTokenService`'s
+  `@PostConstruct`. Default/short (<32 char) keys fail startup under the `prod` profile;
+  elsewhere they're padded with a warning (dev/qa convenience only).
+- **Secrets at rest**: encrypted (AES-256-GCM via `SecretEncryptor`) before being persisted —
+  see Architecture Decisions above for the full data flow. Verified end-to-end: applied a
+  Secret, confirmed the raw SQLite row holds ciphertext (not the original base64), confirmed
+  the reconciliation loop pushes the real decrypted value into a Docker Secret (mounted a test
+  container and read the value back).
+- **SSH provisioning**: `RiggerSshClient` uses trust-on-first-use host-key verification
+  (`DefaultKnownHostsServerKeyVerifier`, backed by `~/.rigger/known_hosts`). First connection to
+  a node accepts and persists its key; a later mismatch (MITM, or a node rebuilt with a new
+  host key) is rejected with `ProvisioningException`. Verified against a real SSH server.
+- **Docker install channel**: `DockerSpec`'s compact constructor rejects any `channel` value
+  outside `stable`/`test`/`nightly` (defense in depth: also re-checked in `DockerInstaller`
+  right before shell interpolation).
+- **Audit log**: append-only by convention (`AuditService` only calls `.save()`), not enforced
+  at the DB layer. Secret applies record `"<redacted-secret-data>"` instead of spec JSON.
+- **Error responses**: uncaught exceptions (`GlobalExceptionHandler.generic()`) return a generic
+  message + correlation ID to the client; the real exception (message, stack trace) is logged
+  server-side tagged with that same ID. The four other handlers (403/404/422/401) already return
+  intentional, safe messages and are unchanged.
 
 ## Known gaps / roadmap
 
-Tracked here so they read as deliberate backlog, not oversights:
+Tracked here so they read as deliberate backlog, not oversights. Security-critical items
+(secret encryption, password hashing, admin/JWT hardening, SSH host-key verification, shell
+injection, RBAC mechanism, generic error responses) are done — see Security model above.
+Remaining gaps are feature-completion and polish:
 
-- Wire `SecretEncryptor`/`SecretAdapter` into the Secret apply/read/Swarm-push path; redact
-  Secret data before writing to the audit log.
-- Replace `UserStore`'s SHA-256+static-salt hashing with BCrypt; back it with a JPA
-  `IdentityRepository` instead of an in-memory map.
-- Fail-fast (outside dev profile) on default/short JWT signing key and default admin password.
-- SSH host-key verification (trust-on-first-use) in `rigger-provisioner`.
-- Allowlist `DockerSpec.channel()` before shell interpolation in `DockerInstaller`.
-- Decide the fate of `@RiggerAuthorize`/`RbacAspect` (wire up or delete) before adding more
-  `rigger-api` controllers.
 - Missing/broken endpoints referenced by `riggerctl`/README but absent in `rigger-api`:
   `cluster up`/`cluster sync` (logic exists in `ClusterOrchestrator`, just not wired to a
   controller), pods listing, streaming logs (`riggerctl logs --follow` is broken end-to-end —
   no server endpoint, and the CLI command bypasses its own authenticated HTTP client), `DELETE`
   for Service/ConfigMap/Secret (only Deployment delete exists today), a read-only GitOps status
-  endpoint (`rigger-ui`'s GitOps page already calls it; `rigger-gitops` already tracks the state,
+  endpoint (the console's GitOps page calls it; `rigger-gitops` already tracks the state,
   just needs a controller).
-- `rigger-operator`'s `ServiceController.reconcile()` is an intentional no-op stub — Service
-  resources are persisted but never reconciled onto Swarm. `ConfigMapController` only creates,
-  never updates/deletes (Swarm Configs are immutable once attached — needs a
-  create-new-version-and-swap pattern, mirroring `ResourceDiffer`'s use in `DeploymentController`).
-- HPA autoscaling never scales up: `MetricsSource` is a hardcoded stub returning 0. Needs a
-  polling `DockerStatsMetricsSource` using docker-java's `StatsCmd`.
-- `ComposeConverter` (in `rigger-manifest`) exists but nothing detects/routes docker-compose
-  input to it from `ApplyCommand`/`WorkloadController.apply()` — README's compose support claim
-  is currently false.
-- CLI `user approve` doesn't exist (README artifact of the old mTLS/CSR-approval design); the
-  real, canonical flow is `riggerctl user create`.
-- rigger-ui: no login page / JWT integration yet (pages assume an already-authenticated session);
-  namespace is hardcoded to `"production"` in every page instead of a real selector.
-- Cleanup candidates (do last, verify build after each): legacy `swarm/model/*` classes in
-  `rigger-swarm-adapter` (superseded by docker-java types), duplicate unused CLI command classes
-  in `rigger-cli/command/user/` (the real ones are static inner classes in `UserCommand`), unused
-  UI dependencies (`components/ui/*` shadcn-style components, `recharts`).
+- `rigger-operator`'s `ServiceController.reconcile()` (MVP, Fase 2.7): resolves the target
+  Deployment by selector match and republishes `LoadBalancer` ports via `EndpointSpec`/
+  `PortConfig`; `ClusterIP` stays a no-op since Swarm's overlay DNS already covers it. Full
+  ingress-controller-grade routing remains out of scope.
+- `ConfigMapController` (Fase 2.8) now creates a new, uniquely-named Docker Config version on
+  content change instead of updating in place (Configs are immutable once created). Referencing
+  Deployments pick up the new version on their own next reconciliation cycle — `ServiceAdapter`
+  resolves `configMapRefs` into `ContainerSpecConfig`s and folds their resolved IDs into the
+  Deployment's `spec-hash` label, so a ConfigMap-only content change is enough to trigger a
+  Deployment update without the Deployment spec itself changing. Orphaned versions (superseded,
+  or belonging to a deleted ConfigMap) are removed once no Swarm service still references them —
+  confirmed by scanning every managed service's `ContainerSpec.configs`. Note: docker-java
+  3.7.1's `ConfigSpec` doesn't deserialise labels back on list/find responses, so cleanup
+  recovers namespace/name by parsing the Config's own name (`rigger__{ns}__{name}__{hash}`,
+  `__`-delimited since Rigger names never contain `__` — see `ConfigAdapter.parseFamilyKey`)
+  rather than reading labels back.
+- HPA autoscaling (Fase 2.9): `DockerStatsMetricsSource` polls per-container CPU via
+  docker-java's `StatsCmd` (non-streaming, one call per running task) and averages across a
+  Deployment's tasks — no Prometheus dependency. Cost scales with task count per HPA cycle
+  (default 30s); clusters with many tasks per Deployment will feel this as added latency,
+  not a correctness issue.
+- The console covers login, namespace switching, topology (graph + list), the four workload kinds,
+  pods with SSE log streaming, YAML apply, cluster ops, GitOps config, audit and users. Not yet
+  done there: editing a resource's YAML in place (apply is create/replace only), and any
+  time-series charting — the metrics endpoints are point-in-time samples, so the console would have
+  to keep its own window.
+
+- **Compose input** is detected server-side by content (top-level `services` map, no
+  `apiVersion`/`kind`) and converted by `ComposeConverter` before anything else in
+  `WorkloadController.apply()`, so the CLI and console both get it without knowing the format.
+  Converted manifests carry no source YAML, so JSON-Schema validation is skipped for them — the
+  converter builds domain records directly and their constructors do the validating.
+- **Dry run must not persist.** `apply(dryRun=true)` stops after parse, RBAC and schema validation
+  and reports each resource as `validated`. This was broken originally: `dryRun` only suppressed the
+  audit payload while still saving, so a "validation" really applied and then reconciled onto Swarm.
+
+## Fase 2 final verification — bugs found and fixed
+
+Found via a real end-to-end smoke test (login → apply Deployment+Service+ConfigMap → get pods →
+ConfigMap content change → delete), not just `mvn clean verify`. Kept here since none of them
+were caught by compilation or unit tests — a reminder that reconciliation loops specifically
+need runtime convergence checks, not just "does it compile":
+
+- **Deployments re-updated on every single reconcile cycle, forever.** `ResourceDiffer.needsUpdate`
+  compared `entity.getSpecJson().hashCode()` (JSON string hash) against the `rigger.io/spec-hash`
+  label, which `ServiceAdapter` had set from `spec.hashCode()` (deserialized record hash) — two
+  unrelated hash functions that could never agree. Fixed by having `diffDockerJava` take a
+  `hashFn` parameter and `DeploymentController` pass `swarm::computeSpecHash`, so both sides use
+  the exact same computation.
+- **Every ordinary Deployment update silently wiped the Service's published ports.**
+  `ServiceAdapter.update()` rebuilds the whole `ServiceSpec` via `buildServiceSpec()`, which never
+  sets `EndpointSpec` — that's `ServiceController`'s job. Combined with the bug above (updates
+  firing every cycle), this produced a permanent wipe/republish loop, bumping the Swarm service's
+  version by the second on an idle cluster. Fixed by carrying over
+  `existing.getSpec().getEndpointSpec()` in `update()` when present.
+- **`ServiceType` only accepted Java constant names** (`CLUSTER_IP`/`LOAD_BALANCER`) while the
+  README and `service.schema.json` document Kubernetes-style casing (`ClusterIP`/`LoadBalancer`) —
+  any Service manifest written exactly as documented failed to parse. Fixed with a `@JsonCreator`
+  on `ServiceType` accepting both spellings, case-insensitively.
+- **Multi-document manifests always failed past the first document.**
+  `WorkloadController.apply()` validated every parsed document against `req.manifest()` — the
+  *entire* raw multi-doc YAML string — instead of that document's own text; `ManifestSchemaValidator`
+  only reads the first YAML document, so anything past it got validated against the wrong schema.
+  This broke the standard quick-start flow of applying Deployment+Service+ConfigMap in one file.
+  Fixed by having `ManifestParser` retain each document's own text in `ParsedManifest.rawYaml()`
+  and validating against that instead.
 
 ## Out of scope (do not re-litigate without a fresh decision)
 

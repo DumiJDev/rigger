@@ -1,0 +1,216 @@
+@import "tailwindcss";
+
+/* Dark mode is driven by a class on <html>, not the media query alone, so the user's explicit
+   choice can override their OS setting. ThemeService sets it and persists the preference. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* No webfont is loaded. Inter is used when the machine already has it, otherwise the platform
+     UI font. Pulling Inter from Google Fonts made the production build fetch over the internet
+     (Angular inlines fonts at build time), so a network hiccup broke `mvn package` — and it would
+     have every operator's browser calling out to Google, which is wrong for a console that may run
+     in an air-gapped cluster. */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* One accent, used deliberately. The previous UI declared a palette and then ignored it in
+     favour of hard-coded hex values, which is a large part of why it read as unfinished. */
+  --color-brand-50:  oklch(0.97 0.02 200);
+  --color-brand-100: oklch(0.93 0.04 200);
+  --color-brand-200: oklch(0.87 0.07 200);
+  --color-brand-300: oklch(0.78 0.10 199);
+  --color-brand-400: oklch(0.70 0.12 198);
+  --color-brand-500: oklch(0.62 0.13 197);
+  --color-brand-600: oklch(0.54 0.12 197);
+  --color-brand-700: oklch(0.45 0.10 197);
+  --color-brand-800: oklch(0.37 0.08 197);
+  --color-brand-900: oklch(0.30 0.06 198);
+
+  /* Status colours are semantic, not decorative: the same green always means "healthy". */
+  --color-ok:    oklch(0.65 0.15 150);
+  --color-warn:  oklch(0.75 0.15 80);
+  --color-error: oklch(0.60 0.19 25);
+  --color-idle:  oklch(0.65 0.02 250);
+}
+
+/* Surface tokens, redefined once for dark mode so components never branch on theme themselves. */
+:root {
+  --surface-page:   oklch(0.98 0.003 250);
+  --surface-raised: oklch(1 0 0);
+  --surface-sunken: oklch(0.955 0.004 250);
+  --border-subtle:  oklch(0.90 0.005 250);
+  --text-primary:   oklch(0.25 0.01 250);
+  --text-muted:     oklch(0.52 0.012 250);
+}
+
+.dark {
+  --surface-page:   oklch(0.18 0.008 250);
+  --surface-raised: oklch(0.22 0.009 250);
+  --surface-sunken: oklch(0.15 0.008 250);
+  --border-subtle:  oklch(0.30 0.010 250);
+  --text-primary:   oklch(0.95 0.004 250);
+  --text-muted:     oklch(0.68 0.010 250);
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    background-color: var(--surface-page);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    margin: 0;
+  }
+  /* Visible focus everywhere — this is an operations tool, keyboard use is normal. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+    border-radius: 0.25rem;
+  }
+}
+
+@layer components {
+  .surface {
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.75rem;
+  }
+  .muted {
+    color: var(--text-muted);
+  }
+  .divider {
+    border-color: var(--border-subtle);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.875rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background-color: var(--color-brand-600);
+    color: white;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--color-brand-700);
+  }
+  .btn-ghost {
+    background-color: transparent;
+    color: var(--text-primary);
+    border-color: var(--border-subtle);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background-color: var(--surface-sunken);
+  }
+  .btn-danger {
+    background-color: transparent;
+    color: var(--color-error);
+    border-color: var(--border-subtle);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background-color: color-mix(in oklch, var(--color-error) 12%, transparent);
+  }
+
+  .input {
+    width: 100%;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border-subtle);
+    background-color: var(--surface-raised);
+    color: var(--text-primary);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+  }
+  .input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .table-wrap {
+    width: 100%;
+    overflow-x: auto;
+  }
+  table.data {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+  table.data th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--text-muted);
+    padding: 0.625rem 0.875rem;
+    border-bottom: 1px solid var(--border-subtle);
+    white-space: nowrap;
+  }
+  table.data td {
+    padding: 0.6875rem 0.875rem;
+    border-bottom: 1px solid var(--border-subtle);
+    vertical-align: middle;
+  }
+  table.data tbody tr:last-child td {
+    border-bottom: none;
+  }
+  table.data tbody tr:hover {
+    background-color: var(--surface-sunken);
+  }
+}
+
+@layer components {
+  /* Sidebar navigation — shared by every nav entry so active state is consistent. */
+  .nav-link {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .nav-link:hover {
+    background-color: var(--surface-sunken);
+    color: var(--text-primary);
+  }
+  .nav-active {
+    background-color: color-mix(in oklch, var(--color-brand-500) 14%, transparent);
+    color: var(--color-brand-700);
+    font-weight: 500;
+  }
+  .dark .nav-active {
+    color: var(--color-brand-300);
+  }
+  .nav-dot {
+    height: 0.375rem;
+    width: 0.375rem;
+    flex-shrink: 0;
+    border-radius: 9999px;
+    background-color: currentColor;
+    opacity: 0.5;
+  }
+  .nav-active .nav-dot {
+    opacity: 1;
+  }
+  .nav-section {
+    padding: 1rem 0.75rem 0.375rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+}

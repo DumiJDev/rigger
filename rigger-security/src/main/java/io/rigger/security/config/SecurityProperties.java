@@ -24,8 +24,12 @@ public class SecurityProperties {
     private String jwtSigningKey      = "changeme-replace-in-production-min-32-chars";
     private int    jwtExpiryMinutes   = 15;
     private String bootstrapAdminName = "admin";
-    /** Default "admin" — override with RIGGER_ADMIN_PASSWORD in production. */
-    private String bootstrapAdminPassword = "admin";
+    /**
+     * Blank by default so {@code UserStore} can tell "not configured" apart from an
+     * intentional value. In the {@code prod} profile, blank fails startup; elsewhere a
+     * random password is generated and logged once. Override with RIGGER_ADMIN_PASSWORD.
+     */
+    private String bootstrapAdminPassword = "";
     private String caCertPath         = "";
 
     public String getMasterKey()                    { return masterKey; }

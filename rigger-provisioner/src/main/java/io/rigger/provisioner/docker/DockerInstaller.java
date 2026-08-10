@@ -6,6 +6,7 @@ import io.rigger.provisioner.ssh.SshSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import java.util.Set;
 
 /**
  * Installs Docker Engine on a remote node via SSH.
@@ -24,6 +25,10 @@ import org.springframework.stereotype.Component;
 public class DockerInstaller {
 
     private static final Logger log = LoggerFactory.getLogger(DockerInstaller.class);
+    // Belt-and-suspenders: DockerSpec already rejects unknown channels at construction time,
+    // but this value gets interpolated straight into a shell command run over SSH, so it's
+    // re-validated at the actual injection point rather than trusting the caller.
+    private static final Set<String> VALID_CHANNELS = Set.of("stable", "test", "nightly");
 
     private final DockerDetector detector;
 
@@ -66,6 +71,7 @@ public class DockerInstaller {
     }
 
     private void installDebian(SshSession session, DockerSpec spec, String nodeName) {
+        requireValidChannel(spec, nodeName);
         execOrFail(session, nodeName, "apt-get update -qq");
         execOrFail(session, nodeName, "apt-get install -y -qq ca-certificates curl gnupg lsb-release");
         execOrFail(session, nodeName, "install -m 0755 -d /etc/apt/keyrings");
@@ -117,6 +123,13 @@ public class DockerInstaller {
                 "Docker installation completed but verification failed: " + result.stderr());
         }
         log.info("Docker version on {}: {}", nodeName, result.trimmedOutput());
+    }
+
+    private void requireValidChannel(DockerSpec spec, String nodeName) {
+        if (!VALID_CHANNELS.contains(spec.channel())) {
+            throw new ProvisioningException(nodeName,
+                "Invalid Docker channel '" + spec.channel() + "' — must be one of " + VALID_CHANNELS);
+        }
     }
 
     private void execOrFail(SshSession session, String nodeName, String command) {

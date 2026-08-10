@@ -293,8 +293,8 @@ riggerctl logs payments-api-pod-xyz -n production --follow
 # Ver identidade actual
 riggerctl whoami
 
-# Aprovar um novo utilizador (cluster-admin only)
-riggerctl user approve alice --role deployer --namespace production
+# Criar um novo utilizador (cluster-admin only)
+riggerctl user create alice --role deployer --namespace production -p <password>
 
 # Revogar acesso
 riggerctl user revoke alice
@@ -405,7 +405,9 @@ echo -n "minhapassword" | base64
 
 ### Suporte a Docker Compose v3
 
-O Rigger aceita directamente `docker-compose.yml`:
+O Rigger aceita directamente `docker-compose.yml`. A deteção é feita pelo conteúdo (um mapa
+`services` no topo, sem `apiVersion`/`kind`), no servidor, pelo que funciona tanto a partir do
+`riggerctl` como da consola web:
 
 ```bash
 riggerctl apply -f docker-compose.yml -n staging
@@ -428,11 +430,12 @@ riggerctl apply -f docker-compose.yml -n staging
 ### Adicionar um utilizador
 
 ```bash
-# 1. O developer inicializa o CLI (gera keypair local)
-riggerctl init --server https://10.0.0.10:7433
+# 1. O admin cria a conta e atribui uma role (autenticação é por username/password + JWT)
+riggerctl user create alice --role deployer --namespace production -p <password>
 
-# 2. O admin aprova e atribui uma role
-riggerctl user approve alice --role deployer --namespace production
+# 2. Alice inicializa o CLI e faz login
+riggerctl init --server https://10.0.0.10:7433
+riggerctl login -u alice
 
 # 3. Alice pode agora usar o CLI
 riggerctl get deployments -n production
@@ -440,9 +443,9 @@ riggerctl get deployments -n production
 
 ### Princípios de segurança
 
-- **Sem passwords** — CLI usa certificados mTLS, nunca username/password
+- **Autenticação por JWT** — login com username/password emite um token JWT de curta duração; não há sessões nem estado no servidor entre pedidos
 - **Namespaces obrigatórios** — não há recursos sem namespace
-- **Secrets cifrados** — AES-256-GCM em repouso, nunca aparecem em logs
+- **Secrets cifrados** — AES-256-GCM em repouso, nunca aparecem em logs nem no audit log
 - **Audit log imutável** — todas as operações são registadas (quem, o quê, quando, de onde)
 - **Deny by default** — qualquer acesso não autorizado retorna 403
 
@@ -547,14 +550,11 @@ export TLS_KEYSTORE_PASSWORD=mypassword
 ```bash
 cd rigger/
 
-# 1. Build do frontend (gera ficheiros para rigger-server/src/main/resources/static/ui/)
-cd rigger-ui
-npm install
-npm run build
-cd ..
-
-# 2. Build de todos os módulos Java
+# Um único comando: o Maven constrói a consola Angular e embute-a no jar.
 mvn clean package -DskipTests
+
+# A iterar apenas no backend? Salta o npm por completo:
+mvn clean package -DskipTests -Dui.skip=true
 
 # Artefactos gerados:
 # rigger-server/target/rigger-server.jar        ← servidor completo
@@ -577,7 +577,7 @@ mvn clean verify
 
 ```bash
 # Terminal 1: frontend com hot reload
-cd rigger-ui && npm run dev
+cd rigger-console && npm start
 
 # Terminal 2: servidor Java
 RIGGER_ATTACH_EXISTING_SWARM=true \
@@ -630,8 +630,10 @@ export RIGGER_MASTER_KEY=$(openssl rand -base64 32)
 # Verificar qual a role atribuída:
 riggerctl whoami
 
-# O admin pode actualizar a role:
-riggerctl user approve alice --role deployer --namespace production
+# O admin pode revogar e recriar o utilizador com outra role
+# (não há ainda um comando para actualizar a role de um utilizador existente):
+riggerctl user revoke alice
+riggerctl user create alice --role deployer --namespace production -p <password>
 ```
 
 ---

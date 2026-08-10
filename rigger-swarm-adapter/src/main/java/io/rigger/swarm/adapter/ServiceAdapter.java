@@ -7,8 +7,6 @@ import io.rigger.core.domain.resource.*;
 import io.rigger.core.util.MemoryUnit;
 import io.rigger.swarm.client.DockerApiException;
 import io.rigger.swarm.client.DockerClientFactory;
-import io.rigger.swarm.model.SwarmTask;
-import io.rigger.swarm.model.SwarmTaskStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -33,9 +31,11 @@ public class ServiceAdapter {
     private static final String LABEL_SPEC_HASH = "rigger.io/spec-hash";
 
     private final DockerClientFactory factory;
+    private final ConfigAdapter configAdapter;
 
-    public ServiceAdapter(DockerClientFactory factory) {
+    public ServiceAdapter(DockerClientFactory factory, ConfigAdapter configAdapter) {
         this.factory = factory;
+        this.configAdapter = configAdapter;
     }
 
     private DockerClient docker() { return factory.get(); }
@@ -101,6 +101,14 @@ public class ServiceAdapter {
             var newSpec = buildServiceSpec(meta, spec, labels);
             long version = existing.getVersion() != null ? existing.getVersion().getIndex() : 0L;
 
+            // buildServiceSpec never sets EndpointSpec — that's ServiceController's job
+            // (publishing/updating ports for a matching Rigger Service). Without this, any
+            // ordinary Deployment update (new image, more replicas, ...) would silently wipe
+            // published ports until the next Service reconciliation cycle put them back.
+            if (existing.getSpec() != null && existing.getSpec().getEndpointSpec() != null) {
+                newSpec.withEndpointSpec(existing.getSpec().getEndpointSpec());
+            }
+
             docker().updateServiceCmd(existing.getId(), newSpec)
                 .withVersion(version)
                 .exec();
@@ -165,6 +173,54 @@ public class ServiceAdapter {
         }
     }
 
+    /**
+     * Streams a container's stdout/stderr to the given output stream.
+     * Blocks until the log stream completes — forever if {@code follow} is true and the
+     * container keeps running, so callers should run this on a request thread they're
+     * prepared to hold open (e.g. a Spring {@code StreamingResponseBody}).
+     */
+    public void streamLogs(String containerId, boolean follow, java.io.OutputStream out) {
+        try {
+            var callback = new com.github.dockerjava.api.async.ResultCallback.Adapter<Frame>() {
+                @Override
+                public void onNext(Frame frame) {
+                    try {
+                        out.write(frame.getPayload());
+                        out.flush();
+                    } catch (java.io.IOException e) {
+                        onError(e);
+                    }
+                }
+            };
+            docker().logContainerCmd(containerId)
+                .withStdOut(true)
+                .withStdErr(true)
+                .withFollowStream(follow)
+                .withTail(200)
+                .exec(callback)
+                .awaitCompletion();
+        } catch (Exception e) {
+            throw new DockerApiException("Failed to stream logs for container " + containerId, e);
+        }
+    }
+
+    /**
+     * Updates only the published ports (EndpointSpec) of an existing Swarm service, leaving
+     * everything else (image, replicas, env, ...) untouched. Used by Service reconciliation —
+     * a Rigger Service doesn't own the underlying Swarm service, it just adjusts routing.
+     */
+    public void updatePublishedPorts(Service existing, List<PortConfig> ports) {
+        try {
+            var spec = existing.getSpec();
+            if (spec == null) return;
+            spec.withEndpointSpec(new EndpointSpec().withPorts(ports));
+            long version = existing.getVersion() != null ? existing.getVersion().getIndex() : 0L;
+            docker().updateServiceCmd(existing.getId(), spec).withVersion(version).exec();
+        } catch (Exception e) {
+            throw new DockerApiException("Failed to update published ports for " + existing.getId(), e);
+        }
+    }
+
     // ── private builders ──────────────────────────────────────────────────
 
     private Map<String, String> buildLabels(ObjectMeta meta, DeploymentSpec spec) {
@@ -173,9 +229,42 @@ public class ServiceAdapter {
         labels.put(LABEL_NAME,      meta.name());
         labels.put(LABEL_KIND,      "Deployment");
         labels.put(LABEL_MANAGED,   "true");
-        labels.put(LABEL_SPEC_HASH, Integer.toHexString(spec.hashCode()));
+        labels.put(LABEL_SPEC_HASH, computeSpecHash(meta, spec));
         if (meta.labels() != null) labels.putAll(meta.labels());
         return labels;
+    }
+
+    /**
+     * Computes the {@code spec-hash} label value for a Deployment: the spec's own hash, folded
+     * with the resolved {@code configMapRefs} Config IDs so a ConfigMap content change (which
+     * doesn't touch the Deployment spec itself) still changes this value.
+     *
+     * <p>{@link io.rigger.operator.diff.ResourceDiffer} (in rigger-operator) must use this exact
+     * same computation to decide whether a Deployment needs updating — otherwise the value it
+     * compares against will never match what actually gets written here, and reconciliation
+     * updates the Swarm service on every single cycle forever instead of converging.
+     */
+    public String computeSpecHash(ObjectMeta meta, DeploymentSpec spec) {
+        String base = Integer.toHexString(spec.hashCode());
+        var resolvedConfigs = resolveConfigs(meta.namespace(), spec);
+        if (resolvedConfigs.isEmpty()) return base;
+        String configsSignature = resolvedConfigs.stream()
+            .map(ContainerSpecConfig::getConfigID)
+            .sorted()
+            .collect(Collectors.joining(","));
+        return base + "-" + Integer.toHexString(configsSignature.hashCode());
+    }
+
+    /** Resolves configMapRefs to the currently live Docker Config for each name, skipping unresolved ones. */
+    private List<ContainerSpecConfig> resolveConfigs(String namespace, DeploymentSpec spec) {
+        var refs = new ArrayList<ContainerSpecConfig>();
+        for (String ref : spec.configMapRefs()) {
+            configAdapter.find(namespace, ref).ifPresent(cfg -> refs.add(new ContainerSpecConfig()
+                .withConfigID(cfg.getId())
+                .withConfigName(cfg.getSpec().getName())
+                .withFile(new ContainerSpecFile().withName("/configmap/" + ref).withUid("0").withGid("0").withMode(0444L))));
+        }
+        return refs;
     }
 
     private com.github.dockerjava.api.model.ServiceSpec buildServiceSpec(ObjectMeta meta, DeploymentSpec spec, Map<String, String> labels) {
@@ -189,6 +278,11 @@ public class ServiceAdapter {
                 .map(e -> e.name() + "=" + e.value())
                 .collect(Collectors.toList());
             containerSpec.withEnv(envList);
+        }
+
+        var resolvedConfigs = resolveConfigs(meta.namespace(), spec);
+        if (!resolvedConfigs.isEmpty()) {
+            containerSpec.withConfigs(resolvedConfigs);
         }
 
         // Task template
