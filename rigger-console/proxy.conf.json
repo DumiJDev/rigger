@@ -1,0 +1,4 @@
+{
+  "/api": { "target": "https://localhost:7433", "secure": false, "changeOrigin": true },
+  "/actuator": { "target": "https://localhost:7433", "secure": false, "changeOrigin": true }
+}

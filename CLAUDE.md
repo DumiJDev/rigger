@@ -2,7 +2,7 @@
 
 Guidance for working in this repository. Rigger is a Docker Swarm operator that exposes
 Kubernetes-like primitives (Deployment, Service, ConfigMap, Secret, HPA) with RBAC, GitOps,
-and a React UI, built as a Java 21+ / Spring Boot 4.1 Maven multi-module reactor.
+and an Angular console, built as a Java 21+ / Spring Boot 4.1 Maven multi-module reactor.
 
 ## Module map
 
@@ -20,8 +20,8 @@ and a React UI, built as a Java 21+ / Spring Boot 4.1 Maven multi-module reactor
 | `rigger-gitops` | JGit-based poll-and-apply agent (`GitOpsAgent`), bypasses HTTP/RBAC by design (trusted internal path via `ManifestApplyService`). |
 | `rigger-api` | Spring MVC REST layer (`WorkloadController`, `ClusterController`, `AuthController`, `UserController`, `AuditController`). |
 | `rigger-cli` | `riggerctl` — Picocli-based CLI. |
-| `rigger-server` | Spring Boot fat-jar entry point (`RiggerApplication`); embeds the built `rigger-ui` as static resources. |
-| `rigger-ui` | React 18 + TypeScript + Vite + Tailwind. Built separately (npm), output copied to `rigger-server/src/main/resources/static/ui/`. |
+| `rigger-server` | Spring Boot fat-jar entry point (`RiggerApplication`); embeds the built console as static resources. |
+| `rigger-console` | Angular 22 + Tailwind 4 + Transloco (pt/en) + dark mode. Built separately (`npm run build`), output written straight into `rigger-server/src/main/resources/static/ui/` — no copy step, and `mvn` never triggers it. See the `angular` skill. |
 
 ## Build & run
 
@@ -44,7 +44,7 @@ easy to miss until you actually call that specific endpoint.
 
 ```bash
 mvn clean verify                     # all 14 modules, compiles + tests
-cd rigger-ui && npm install && npm run build   # output goes to rigger-server/.../static/ui/ automatically
+cd rigger-console && npm ci && npm run build   # output goes to rigger-server/.../static/ui/ automatically
 ```
 
 ### Run the server locally (dev)
@@ -117,10 +117,14 @@ Follow `QUICK-START.md` for the full CLI flow (`riggerctl init --insecure` → `
   JPA entities mapping to `TEXT`/`INTEGER`-typed SQLite columns (timestamps, booleans) must
   set `columnDefinition` explicitly to match — Hibernate's schema *validate* mode is strict
   about this even though SQLite itself is dynamically typed.
-- **UI build integration**: `rigger-ui`'s Vite config writes directly to
-  `rigger-server/src/main/resources/static/ui/` — there is no separate copy step. `rigger-ui`
-  is mid-migration from JS to TS (`allowJs: true` in `tsconfig.json`); `App.tsx`/`main.tsx` are
-  canonical, pages remain `.jsx` for now.
+- **Console**: Angular 22 (standalone + signals), served at `/ui/` from the same jar and origin as
+  the API — which is why no CORS configuration exists anywhere and shouldn't be added. `UiController`
+  forwards route-shaped paths to `index.html` for deep links, but deliberately excludes any segment
+  containing a dot: a blanket `/ui/**` forward also matches `index.html` and every hashed asset, so
+  the target re-matches the mapping and recurses until the request dies with a StackOverflowError.
+  Auth is the same JWT the CLI uses, held in `localStorage`; there is no refresh endpoint, so a 401
+  means re-login rather than a silent renewal. The console reads `GET /auth/permissions` to decide
+  which actions to offer instead of hard-coding a copy of the RBAC table.
 
 ## Security model (current state)
 
@@ -170,7 +174,7 @@ Remaining gaps are feature-completion and polish:
   controller), pods listing, streaming logs (`riggerctl logs --follow` is broken end-to-end —
   no server endpoint, and the CLI command bypasses its own authenticated HTTP client), `DELETE`
   for Service/ConfigMap/Secret (only Deployment delete exists today), a read-only GitOps status
-  endpoint (`rigger-ui`'s GitOps page already calls it; `rigger-gitops` already tracks the state,
+  endpoint (the console's GitOps page calls it; `rigger-gitops` already tracks the state,
   just needs a controller).
 - `rigger-operator`'s `ServiceController.reconcile()` (MVP, Fase 2.7): resolves the target
   Deployment by selector match and republishes `LoadBalancer` ports via `EndpointSpec`/
@@ -196,12 +200,14 @@ Remaining gaps are feature-completion and polish:
 - `ComposeConverter` (in `rigger-manifest`) exists but nothing detects/routes docker-compose
   input to it from `ApplyCommand`/`WorkloadController.apply()` — README's compose support claim
   is currently false.
-- rigger-ui: no login page / JWT integration yet (pages assume an already-authenticated session);
-  namespace is hardcoded to `"production"` in every page instead of a real selector.
+- The console covers login, namespace switching, topology (graph + list), the four workload kinds,
+  pods with SSE log streaming, YAML apply, cluster ops, GitOps config, audit and users. Not yet
+  done there: editing a resource's YAML in place (apply is create/replace only), and any
+  time-series charting — the metrics endpoints are point-in-time samples, so the console would have
+  to keep its own window.
 - Cleanup candidates (do last, verify build after each): legacy `swarm/model/*` classes in
   `rigger-swarm-adapter` (superseded by docker-java types), duplicate unused CLI command classes
-  in `rigger-cli/command/user/` (the real ones are static inner classes in `UserCommand`), unused
-  UI dependencies (`components/ui/*` shadcn-style components, `recharts`).
+  in `rigger-cli/command/user/` (the real ones are static inner classes in `UserCommand`).
 
 ## Fase 2 final verification — bugs found and fixed
 

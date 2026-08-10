@@ -549,7 +549,7 @@ export TLS_KEYSTORE_PASSWORD=mypassword
 cd rigger/
 
 # 1. Build do frontend (gera ficheiros para rigger-server/src/main/resources/static/ui/)
-cd rigger-ui
+cd rigger-console
 npm install
 npm run build
 cd ..
@@ -578,7 +578,7 @@ mvn clean verify
 
 ```bash
 # Terminal 1: frontend com hot reload
-cd rigger-ui && npm run dev
+cd rigger-console && npm start
 
 # Terminal 2: servidor Java
 RIGGER_ATTACH_EXISTING_SWARM=true \
