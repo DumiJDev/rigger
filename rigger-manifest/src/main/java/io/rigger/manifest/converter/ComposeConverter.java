@@ -83,14 +83,14 @@ public class ComposeConverter {
 
     private void convertServices(JsonNode services, String ns, String source, List<ParsedManifest> out) {
         if (services == null || services.isMissingNode()) return;
-        services.fields().forEachRemaining(entry -> {
+        services.properties().forEach(entry -> {
             String name = entry.getKey();
             JsonNode svc = entry.getValue();
             String image = svc.path("image").asText("unknown:latest");
             int replicas = svc.path("deploy").path("replicas").asInt(1);
 
             var env = new ArrayList<EnvVar>();
-            svc.path("environment").fields().forEachRemaining(e ->
+            svc.path("environment").properties().forEach(e ->
                 env.add(new EnvVar(e.getKey(), e.getValue().asText(), null)));
 
             var spec = new DeploymentSpec(replicas, Map.of("app", name), image,
@@ -118,10 +118,10 @@ public class ComposeConverter {
 
     private void convertConfigs(JsonNode configs, String ns, String source, List<ParsedManifest> out) {
         if (configs == null || configs.isMissingNode()) return;
-        configs.fields().forEachRemaining(entry -> {
+        configs.properties().forEach(entry -> {
             String name = entry.getKey();
             var data = new LinkedHashMap<String, String>();
-            entry.getValue().fields().forEachRemaining(e -> data.put(e.getKey(), e.getValue().asText()));
+            entry.getValue().properties().forEach(e -> data.put(e.getKey(), e.getValue().asText()));
             var spec = new ConfigMapSpec(data);
             var meta = new ObjectMeta(name, ns, Map.of(), Map.of());
             out.add(new ParsedManifest(new RiggerManifest(RiggerManifest.API_VERSION, "ConfigMap", meta, spec), source, null));
@@ -130,10 +130,10 @@ public class ComposeConverter {
 
     private void convertSecrets(JsonNode secrets, String ns, String source, List<ParsedManifest> out) {
         if (secrets == null || secrets.isMissingNode()) return;
-        secrets.fields().forEachRemaining(entry -> {
+        secrets.properties().forEach(entry -> {
             String name = entry.getKey();
             var data = new LinkedHashMap<String, String>();
-            entry.getValue().fields().forEachRemaining(e -> data.put(e.getKey(), e.getValue().asText()));
+            entry.getValue().properties().forEach(e -> data.put(e.getKey(), e.getValue().asText()));
             // If no data keys present, use a placeholder — values must be supplied separately
             if (data.isEmpty()) return;
             var spec = new SecretSpec(data, null);

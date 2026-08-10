@@ -242,6 +242,30 @@ jobs:
           test -s /tmp/cli-logs.txt || { echo "CLI logs were empty"; exit 1; }
           echo "ok: CLI log framing is raw"
 
+      # docker-compose support is detected by content and converted server-side. It was declared in
+      # the README long before anything routed to it, so it gets its own check.
+      - name: Compose input is detected and converted
+        run: |
+          set -e
+          CLI="java -jar artifacts/riggerctl.jar"
+          cat > /tmp/ci-compose.yml <<'YAML'
+          services:
+            composed:
+              image: nginx:alpine
+              deploy:
+                replicas: 1
+              ports:
+                - "18090:80"
+          YAML
+          $CLI apply -f /tmp/ci-compose.yml -n default -i
+          $CLI get deployments -n default -i | grep -q composed \
+            || { echo "compose service was not converted into a Deployment"; exit 1; }
+          $CLI get services -n default -i | grep -q composed-svc \
+            || { echo "compose ports did not produce a Service"; exit 1; }
+          echo "ok: compose converted"
+          echo y | $CLI delete deployment composed -n default -i
+          echo y | $CLI delete service composed-svc -n default -i
+
       - name: Assert reconciliation converges
         run: |
           # A spec-hash mismatch once made every 15s cycle re-update the service forever, which

@@ -128,7 +128,7 @@ public class ManifestParser {
     private Map<String, String> parseStringMap(com.fasterxml.jackson.databind.JsonNode node) {
         if (node == null || node.isMissingNode() || node.isNull()) return Map.of();
         var map = new LinkedHashMap<String, String>();
-        node.fields().forEachRemaining(e -> map.put(e.getKey(), e.getValue().asText()));
+        node.properties().forEach(e -> map.put(e.getKey(), e.getValue().asText()));
         return Collections.unmodifiableMap(map);
     }
 }

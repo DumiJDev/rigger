@@ -52,6 +52,10 @@
                 <targetPath>static/ui</targetPath>
                 <filtering>false</filtering>
             </resource>
+            <!-- No <overwrite> override here: maven-resources-plugin's default change detection has
+                 compared *content* rather than timestamps since 3.4.0, which is exactly what's
+                 wanted on a Windows-mounted filesystem where timestamp granularity can hide a real
+                 change. Setting overwrite=true also logs a deprecation now. -->
         </resources>
         <plugins>
             <!-- Builds the Angular console so `mvn package` produces a complete artifact. Before
@@ -119,16 +123,6 @@
                         </configuration>
                     </execution>
                 </executions>
-            </plugin>
-
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-resources-plugin</artifactId>
-                <configuration>
-                    <!-- Default only copies when the source is newer, and timestamp granularity on
-                         Windows-mounted filesystems can make that skip a real change. -->
-                    <overwrite>true</overwrite>
-                </configuration>
             </plugin>
 
             <plugin>
