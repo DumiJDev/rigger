@@ -16,7 +16,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * Writes the metric time series the console charts, and bounds the tables that would otherwise
@@ -78,18 +82,31 @@ public class MetricsSampler {
             log.warn("Cluster metrics sampling failed: {}", e.getMessage());
         }
 
-        for (var entity : store.findAllByKind("Deployment")) {
-            try {
-                var spec = mapper.readValue(entity.getSpecJson(), DeploymentSpec.class);
-                var d = collector.deployment(entity.getNamespace(), entity.getName(), spec.replicas());
-                add(batch, now, MetricNames.DEPLOYMENT_CPU,              d.namespace(), d.name(), d.cpuPercent());
-                add(batch, now, MetricNames.DEPLOYMENT_REPLICAS_RUNNING, d.namespace(), d.name(), d.runningReplicas());
-                add(batch, now, MetricNames.DEPLOYMENT_REPLICAS_DESIRED, d.namespace(), d.name(), d.desiredReplicas());
-            } catch (Exception e) {
-                // One unreadable spec or one unreachable service must not cost the whole round.
-                log.debug("Metrics sampling skipped for {}/{}: {}",
-                    entity.getNamespace(), entity.getName(), e.getMessage());
-            }
+        // Concurrently, for the same reason the stats calls inside a single Deployment are: each
+        // Deployment costs a round-trip to the Engine, so in sequence a round takes as long as the
+        // sum and the configured interval stops meaning anything.
+        List<MetricsCollector.DeploymentSnapshot> snapshots;
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var futures = store.findAllByKind("Deployment").stream()
+                .map(entity -> executor.submit(() -> {
+                    // One unreadable spec or one unreachable service must not cost the whole round.
+                    try {
+                        var spec = mapper.readValue(entity.getSpecJson(), DeploymentSpec.class);
+                        return collector.deployment(entity.getNamespace(), entity.getName(), spec.replicas());
+                    } catch (Exception e) {
+                        log.debug("Metrics sampling skipped for {}/{}: {}",
+                            entity.getNamespace(), entity.getName(), e.getMessage());
+                        return null;
+                    }
+                }))
+                .toList();
+            snapshots = futures.stream().map(MetricsSampler::valueOf).filter(Objects::nonNull).toList();
+        }
+
+        for (var d : snapshots) {
+            add(batch, now, MetricNames.DEPLOYMENT_CPU,              d.namespace(), d.name(), d.cpuPercent());
+            add(batch, now, MetricNames.DEPLOYMENT_REPLICAS_RUNNING, d.namespace(), d.name(), d.runningReplicas());
+            add(batch, now, MetricNames.DEPLOYMENT_REPLICAS_DESIRED, d.namespace(), d.name(), d.desiredReplicas());
         }
 
         if (!batch.isEmpty()) {
@@ -117,6 +134,20 @@ public class MetricsSampler {
             }
         } catch (Exception e) {
             log.warn("Retention prune failed, will retry next cycle: {}", e.getMessage());
+        }
+    }
+
+    /** Unwraps a completed future, treating any failure as "no snapshot this round". */
+    private static MetricsCollector.DeploymentSnapshot valueOf(
+            Future<MetricsCollector.DeploymentSnapshot> future) {
+        try {
+            return future.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (ExecutionException e) {
+            log.debug("Sampling task failed: {}", e.getCause() != null ? e.getCause().getMessage() : e.getMessage());
+            return null;
         }
     }
 

@@ -52,7 +52,7 @@ export class DashboardPage {
   readonly events = signal<EventResponse[]>([]);
 
   /** Keyed by metric name; absent or short means the sparkline renders its empty state. */
-  readonly history = signal<Record<string, number[]>>({});
+  readonly history = signal<Record<string, [number, number][]>>({});
   readonly cpuSeries = signal<ChartSeries[]>([]);
 
   readonly health = computed(() => {
@@ -127,9 +127,9 @@ export class DashboardPage {
         this.optional(this.api.metricSeries(metric, { minutes: WINDOW_MINUTES })),
       ),
     );
-    const next: Record<string, number[]> = {};
+    const next: Record<string, [number, number][]> = {};
     for (const series of results) {
-      if (series) next[series.metric] = series.points.map((p) => p.v);
+      if (series) next[series.metric] = toXy(series);
     }
     this.history.set(next);
   }
@@ -155,7 +155,7 @@ export class DashboardPage {
     this.cpuSeries.set(
       series
         .filter((s): s is MetricSeries => s !== null)
-        .map((s) => ({ label: s.name, points: s.points.map((p) => p.v) })),
+        .map((s) => ({ label: s.name, points: toXy(s) })),
     );
   }
 
@@ -164,9 +164,24 @@ export class DashboardPage {
     return firstValueFrom(source.pipe(catchError(() => of(null))));
   }
 
-  sparkline(metric: ClusterMetricName): number[] {
+  /**
+   * Green only when there are nodes and all of them are active. With no nodes at all the old
+   * expression (`active < total`) was false, so an empty cluster was painted green as though
+   * everything were fine — the one case where a colour must not reassure.
+   */
+  nodeColor(m: ClusterMetrics): string {
+    if (m.totalNodes === 0) return 'var(--text-faint)';
+    return m.activeNodes < m.totalNodes ? 'var(--color-warn)' : 'var(--color-ok)';
+  }
+
+  sparkline(metric: ClusterMetricName): [number, number][] {
     return this.history()[metric] ?? [];
   }
+}
+
+/** Server timestamps are ISO strings; the charts scale their x-axis by time, so parse once here. */
+function toXy(series: MetricSeries): [number, number][] {
+  return series.points.map((p) => [Date.parse(p.t), p.v]);
 }
 
 function describe(e: unknown): string {

@@ -20,7 +20,7 @@
               class="mt-2"
               [points]="sparkline('nodes.active')"
               [emptyLabel]="t('chart.collecting')"
-              [color]="m.activeNodes < m.totalNodes ? 'var(--color-warn)' : 'var(--color-ok)'"
+              [color]="nodeColor(m)"
             />
           </div>
         </div>

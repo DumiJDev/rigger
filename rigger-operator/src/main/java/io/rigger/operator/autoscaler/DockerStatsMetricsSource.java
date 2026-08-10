@@ -9,6 +9,11 @@ import io.rigger.swarm.client.DockerClientFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -16,11 +21,16 @@ import java.util.concurrent.atomic.AtomicReference;
  * Polls per-container CPU usage from the Docker Engine API ({@code StatsCmd}) and averages it
  * across every running task of a Deployment's Swarm service — no Prometheus dependency needed.
  *
- * <p>Each call issues one blocking, non-streaming stats request per running container, so cost
- * scales with task count; {@link HpaController} already limits how often this runs (default
- * every 30s), which keeps this within reasonable bounds for typical cluster sizes. Clusters with
- * very many tasks per Deployment will feel this as added latency on each HPA cycle — a caveat
- * worth knowing rather than hiding.
+ * <p>One blocking, non-streaming stats request per running container. Measured against a real
+ * Engine, each takes about 2 seconds — the Docker API needs two samples to compute a CPU delta, so
+ * the wait is inherent and not something a faster client would avoid.
+ *
+ * <p>Which is why the requests are issued <strong>concurrently on virtual threads</strong>. Run in
+ * sequence they cost 2s × task count, and that silently broke the schedules built on top: a sampler
+ * configured for 5s ran every 17s with six tasks, because {@code fixedDelay} counts from the end of
+ * the previous run. A 30-task Deployment would have turned a 30s cycle into 90s. Blocking IO fanned
+ * out over virtual threads is the case they exist for, and it makes the cost of a cycle the cost of
+ * its slowest single call rather than the sum of all of them.
  */
 @Component
 public class DockerStatsMetricsSource implements MetricsSource {
@@ -41,23 +51,43 @@ public class DockerStatsMetricsSource implements MetricsSource {
         var svcOpt = serviceAdapter.find(namespace, name);
         if (svcOpt.isEmpty()) return 0;
 
-        var tasks = serviceAdapter.listTasks(svcOpt.get().getId());
-        double total = 0;
-        int counted = 0;
+        var containerIds = serviceAdapter.listTasks(svcOpt.get().getId()).stream()
+            .filter(t -> t.getStatus() != null && t.getStatus().getState() == TaskState.RUNNING)
+            .map(Task::getStatus)
+            .filter(s -> s.getContainerStatus() != null && s.getContainerStatus().getContainerID() != null)
+            .map(s -> s.getContainerStatus().getContainerID())
+            .toList();
 
-        for (Task task : tasks) {
-            if (task.getStatus() == null || task.getStatus().getState() != TaskState.RUNNING) continue;
-            var containerStatus = task.getStatus().getContainerStatus();
-            if (containerStatus == null || containerStatus.getContainerID() == null) continue;
+        if (containerIds.isEmpty()) return 0;
 
-            Double pct = containerCpuPercent(containerStatus.getContainerID());
-            if (pct != null) {
-                total += pct;
-                counted++;
-            }
+        // A fresh executor per call rather than a shared pool: virtual threads are cheap to create,
+        // and this way there is no pool to size, no queue to starve, and nothing left running
+        // between cycles.
+        List<Double> samples;
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var futures = containerIds.stream()
+                .map(id -> executor.submit(() -> containerCpuPercent(id)))
+                .toList();
+            samples = futures.stream().map(DockerStatsMetricsSource::valueOf).filter(Objects::nonNull).toList();
         }
 
-        return counted == 0 ? 0 : total / counted;
+        // Containers that failed to report are excluded rather than counted as zero: averaging in a
+        // zero for an unreadable container would report a busy Deployment as idle, which for the HPA
+        // means scaling down exactly when it should not.
+        return samples.isEmpty() ? 0 : samples.stream().mapToDouble(Double::doubleValue).average().orElse(0);
+    }
+
+    /** Unwraps a completed future, treating any failure as "no sample" — same as an unreadable container. */
+    private static Double valueOf(Future<Double> future) {
+        try {
+            return future.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (ExecutionException e) {
+            log.debug("Stats task failed: {}", e.getCause() != null ? e.getCause().getMessage() : e.getMessage());
+            return null;
+        }
     }
 
     private Double containerCpuPercent(String containerId) {

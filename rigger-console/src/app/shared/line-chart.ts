@@ -2,7 +2,8 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
 
 export interface ChartSeries {
   label: string;
-  points: number[];
+  /** `[epochMillis, value]` — see the x-scale note on {@link LineChart}. */
+  points: [number, number][];
 }
 
 /**
@@ -11,9 +12,14 @@ export interface ChartSeries {
  * <p>Bigger than a sparkline in one way that matters: it has a shared vertical scale and labels it.
  * Several lines with no axis are unreadable, because you cannot tell a line at 80% from one at 8%.
  *
- * <p>All series share one scale computed across every point, so the lines are comparable to each
- * other; scaling each to its own max would make an idle Deployment and a saturated one look
+ * <p>All series share one vertical scale computed across every point, so the lines are comparable to
+ * each other; scaling each to its own max would make an idle Deployment and a saturated one look
  * identical.
+ *
+ * <p>They also share one <strong>horizontal</strong> scale, taken from timestamps rather than array
+ * position. This matters more here than in a sparkline: a Deployment created ten minutes ago has
+ * fewer samples than one running all hour, and plotted by index its short series would stretch
+ * across the full width and appear to have started at the same moment as the others.
  */
 @Component({
   selector: 'r-line-chart',
@@ -109,9 +115,17 @@ export class LineChart {
   readonly hasData = computed(() => this.withData().length > 0);
 
   readonly scaleMax = computed(() => {
-    const max = Math.max(this.minScale(), ...this.withData().flatMap((s) => s.points));
+    const max = Math.max(this.minScale(), ...this.withData().flatMap((s) => s.points.map((p) => p[1])));
     // Any positive span keeps a wholly-zero chart a flat line on the baseline rather than NaN.
     return max > 0 ? max : 1;
+  });
+
+  /** Time window spanned by all series together, so every line is drawn on the same axis. */
+  private readonly timeSpan = computed(() => {
+    const times = this.withData().flatMap((s) => s.points.map((p) => p[0]));
+    const t0 = Math.min(...times);
+    const t1 = Math.max(...times);
+    return { t0, span: t1 - t0 };
   });
 
   readonly gridlines = computed(() => {
@@ -124,15 +138,18 @@ export class LineChart {
     const max = this.scaleMax();
     const h = this.height();
     const pad = 2;
-    const span = h - pad * 2;
+    const vSpan = h - pad * 2;
+    const { t0, span } = this.timeSpan();
     return this.withData().map((s, i) => ({
       label: s.label,
       color: `oklch(0.62 0.19 ${LineChart.HUES[i % LineChart.HUES.length]})`,
-      latest: s.points[s.points.length - 1],
+      latest: s.points[s.points.length - 1][1],
       d: s.points
-        .map((v, j) => {
-          const x = (j / (s.points.length - 1)) * 100;
-          const y = pad + (1 - v / max) * span;
+        .map(([t, v], j) => {
+          // Every series sampled at one instant would divide by zero; even spacing is the only
+          // sensible fallback and it is visually identical for a single-timestamp chart.
+          const x = span > 0 ? ((t - t0) / span) * 100 : (j / Math.max(1, s.points.length - 1)) * 100;
+          const y = pad + (1 - v / max) * vSpan;
           return `${round(x)},${round(y)}`;
         })
         .join(' '),
