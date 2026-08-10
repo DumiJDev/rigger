@@ -46,13 +46,25 @@ export class GitOpsPage {
       this.config.set(null);
     }
 
-    // 404 here means GitOps is disabled, which is a normal state rather than an error.
+    await this.loadState();
+    this.loading.set(false);
+  }
+
+  /**
+   * Only asks for sync state when the config says GitOps is on. The endpoint 404s when disabled,
+   * which is a normal state rather than an error — but calling it regardless meant every visit to
+   * this page logged a failed request in the browser console for no reason.
+   */
+  private async loadState(): Promise<void> {
+    if (!this.config()?.enabled) {
+      this.state.set(null);
+      return;
+    }
     try {
       this.state.set(await firstValueFrom(this.api.gitopsState()));
     } catch {
       this.state.set(null);
     }
-    this.loading.set(false);
   }
 
   canEdit(): boolean {
@@ -77,11 +89,7 @@ export class GitOpsPage {
       this.failed.set(false);
       this.message.set(this.transloco.translate('gitops.saved'));
       // The agent picks this up on its next poll, so refresh state to reflect the new repository.
-      try {
-        this.state.set(await firstValueFrom(this.api.gitopsState()));
-      } catch {
-        this.state.set(null);
-      }
+      await this.loadState();
     } catch (e) {
       this.failed.set(true);
       const err = e as { status?: number; error?: { detail?: string } };

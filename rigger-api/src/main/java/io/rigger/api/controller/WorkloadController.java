@@ -96,25 +96,32 @@ public class WorkloadController {
             boolean exists   = store.existsByKindAndNamespaceAndName(
                 manifest.kind(), namespace, manifest.metadata().name());
 
-            var entity = store.findByKindAndNamespaceAndName(manifest.kind(), namespace, manifest.metadata().name())
-                .orElse(new ResourceEntity(UlidGenerator.generate(), manifest.kind(),
-                    namespace, manifest.metadata().name(), specJson, labelsJson, ctx.identityName()));
+            // A dry run validates and reports, and must change nothing: everything above this point
+            // (parse, RBAC, schema) is the validation the caller asked for. Previously dryRun only
+            // suppressed the audit payload while still persisting, so `riggerctl apply --dry-run`
+            // and the console's "validate without applying" both really applied — the resource then
+            // got reconciled onto Swarm for good measure.
+            if (!req.dryRun()) {
+                var entity = store.findByKindAndNamespaceAndName(manifest.kind(), namespace, manifest.metadata().name())
+                    .orElse(new ResourceEntity(UlidGenerator.generate(), manifest.kind(),
+                        namespace, manifest.metadata().name(), specJson, labelsJson, ctx.identityName()));
 
-            entity.setSpecJson(specJson);
-            entity.setLabelsJson(labelsJson);
-            entity.setAppliedBy(ctx.identityName());
-            store.save(entity);
+                entity.setSpecJson(specJson);
+                entity.setLabelsJson(labelsJson);
+                entity.setAppliedBy(ctx.identityName());
+                store.save(entity);
 
-            var ref = new ResourceRef(ResourceKind.valueOf(manifest.kind().toUpperCase().replace("CONFIGMAP","CONFIG_MAP")),
-                namespace, manifest.metadata().name());
-            eventBus.publish(new ResourceAppliedEvent(ref, ctx.identityName(), !exists));
-            String auditAfterState = req.dryRun() ? null
-                : "Secret".equals(manifest.kind()) ? "<redacted-secret-data>" : specJson;
-            audit.recordSuccess(ctx, AuditAction.APPLY, manifest.kind(), manifest.metadata().name(),
-                exists ? "previous" : null, auditAfterState);
+                var ref = new ResourceRef(ResourceKind.valueOf(manifest.kind().toUpperCase().replace("CONFIGMAP","CONFIG_MAP")),
+                    namespace, manifest.metadata().name());
+                eventBus.publish(new ResourceAppliedEvent(ref, ctx.identityName(), !exists));
+                audit.recordSuccess(ctx, AuditAction.APPLY, manifest.kind(), manifest.metadata().name(),
+                    exists ? "previous" : null,
+                    "Secret".equals(manifest.kind()) ? "<redacted-secret-data>" : specJson);
+            }
 
             results.add(Map.of("kind", manifest.kind(), "name", manifest.metadata().name(),
-                "namespace", namespace, "action", exists ? "updated" : "created"));
+                "namespace", namespace,
+                "action", req.dryRun() ? "validated" : exists ? "updated" : "created"));
         }
         return ResponseEntity.ok(Map.of("applied", results.size(), "resources", results));
     }

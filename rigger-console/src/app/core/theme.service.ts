@@ -29,10 +29,18 @@ export class ThemeService {
     this.apply();
   }
 
-  /** Cycles light → dark → system, for a single toolbar button. */
+  /**
+   * Advances the single toolbar button: explicit choices cycle light → dark → system, and from
+   * "system" the next click flips to the opposite of what's currently on screen.
+   *
+   * <p>Cycling blindly to "light" from "system" is what makes these toggles feel broken — a user
+   * already looking at a light page clicks it and nothing appears to happen.
+   */
   cycle(): void {
     const next: ThemeMode =
-      this.mode() === 'light' ? 'dark' : this.mode() === 'dark' ? 'system' : 'light';
+      this.mode() === 'light' ? 'dark'
+      : this.mode() === 'dark' ? 'system'
+      : this.media.matches ? 'light' : 'dark';
     this.set(next);
   }
 
