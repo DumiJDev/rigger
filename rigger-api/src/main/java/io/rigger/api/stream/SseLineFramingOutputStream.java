@@ -1,27 +1,31 @@
 package io.rigger.api.stream;
 
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Re-frames a raw byte stream of log output into Server-Sent Events, one event per line.
+ * Splits log output into lines and sends each one as a Server-Sent Event through an
+ * {@link SseEmitter}, which owns the wire framing and the async request lifecycle.
  *
- * <p>Docker's log stream arrives as arbitrary chunks that don't align to line boundaries, so this
- * buffers until it sees a newline before emitting — a naive per-chunk wrapper would split single
- * log lines across several SSE events and corrupt them in the browser.
+ * <p>An earlier attempt wrote {@code data:} framing by hand into a {@code StreamingResponseBody}.
+ * The headers went out correctly but the streaming thread was interrupted immediately, so the
+ * browser received an open, permanently empty stream and no error — hence going through the
+ * framework's supported SSE path instead of hand-rolling it.
  *
- * <p>Only used for the {@code text/event-stream} variant of the pod-logs endpoint; the plain-text
- * variant that {@code riggerctl logs} consumes keeps writing raw bytes.
+ * <p>Each {@code write(byte[], off, len)} call carries one Docker log frame. Newlines inside a frame
+ * split it into separate events, and any remainder is sent at the end of the frame rather than held
+ * back, since docker-java's payloads don't reliably end with a newline.
  */
 public class SseLineFramingOutputStream extends OutputStream {
 
-    private final OutputStream delegate;
+    private final SseEmitter emitter;
     private final ByteArrayOutputStream lineBuffer = new ByteArrayOutputStream(256);
 
-    public SseLineFramingOutputStream(OutputStream delegate) {
-        this.delegate = delegate;
+    public SseLineFramingOutputStream(SseEmitter emitter) {
+        this.emitter = emitter;
     }
 
     @Override
@@ -38,24 +42,21 @@ public class SseLineFramingOutputStream extends OutputStream {
         for (int i = off; i < off + len; i++) {
             write(b[i]);
         }
+        emitIfPending();
+    }
+
+    private void emitIfPending() throws IOException {
+        if (lineBuffer.size() > 0) emit();
     }
 
     private void emit() throws IOException {
         String line = lineBuffer.toString(StandardCharsets.UTF_8);
         lineBuffer.reset();
-        delegate.write(("data: " + line + "\n\n").getBytes(StandardCharsets.UTF_8));
-        delegate.flush();
+        emitter.send(SseEmitter.event().data(line));
     }
 
-    /** Flushes any trailing partial line so the last log line isn't swallowed when the stream ends. */
     @Override
     public void close() throws IOException {
-        if (lineBuffer.size() > 0) emit();
-        delegate.flush();
-    }
-
-    @Override
-    public void flush() throws IOException {
-        delegate.flush();
+        emitIfPending();
     }
 }

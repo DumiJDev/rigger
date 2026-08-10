@@ -11,8 +11,12 @@ The operator's web UI. Separate codebase, but its build output is embedded into 
 ## Build contract with the backend (don't break this)
 
 - Build output goes to `rigger-server/src/main/resources/static/ui` — there is no copy step.
-- `baseHref` is `/ui/` and the router must match it: `UiController` forwards `/ui/**` to
-  `index.html` for deep links, and `/ui/**` is `permitAll` in Spring Security.
+- `baseHref` is `/ui/` and the router must match it. `UiResourceConfig` serves `/ui/**` by file
+  existence — real files are served, anything else falls back to `index.html` so deep links work —
+  and `/ui/**` is `permitAll` in Spring Security. Don't replace that with a pattern-based forward:
+  a blanket one matches `index.html` itself and recurses, and excluding only dotted first segments
+  still swallows nested assets like `i18n/en.json`, which arrives at Transloco as HTML and leaves
+  every page blank with nothing in the console.
 - API and UI are same-origin, so **no CORS config exists anywhere** — keep it that way. The dev
   server proxies `/api` and `/actuator` to `https://localhost:7433` with TLS verification off
   (self-signed dev cert).
@@ -74,13 +78,16 @@ missing key renders as the key itself, which is a visible defect.
 
 ## Streaming logs
 
-`GET /api/v1/namespaces/{ns}/pods/{pod}/logs` serves two framings, chosen by `Accept`:
-- `text/event-stream` → SSE, one event per line. Use this in the browser.
-- `text/plain` → raw chunked bytes, what `riggerctl` consumes. Don't change its framing.
+Two endpoints, separated by path rather than by `Accept`:
+- `GET .../pods/{pod}/logs/stream` → SSE, one event per line. This is the browser's.
+- `GET .../pods/{pod}/logs` → raw chunked bytes, what `riggerctl` consumes. Don't change its framing.
 
-`EventSource` can't set an `Authorization` header, so use `fetch` with a `ReadableStream` reader
-and parse `data:` lines, or pass the token another way — verify whichever you pick against a
-running server.
+They were originally one path with different `produces`, but content negotiation had to break the
+tie for the wildcard Accept the CLI sends and picked event-stream, so `riggerctl logs` started
+printing `data:` prefixes. Distinct paths keep each client's framing unambiguous.
+
+`EventSource` can't set an `Authorization` header, so the console uses `fetch` with a
+`ReadableStream` reader and parses `data:` lines itself.
 
 ## Verifying
 

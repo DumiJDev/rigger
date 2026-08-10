@@ -405,7 +405,9 @@ echo -n "minhapassword" | base64
 
 ### Suporte a Docker Compose v3
 
-O Rigger aceita directamente `docker-compose.yml`:
+O Rigger aceita directamente `docker-compose.yml`. A deteção é feita pelo conteúdo (um mapa
+`services` no topo, sem `apiVersion`/`kind`), no servidor, pelo que funciona tanto a partir do
+`riggerctl` como da consola web:
 
 ```bash
 riggerctl apply -f docker-compose.yml -n staging

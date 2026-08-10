@@ -85,6 +85,17 @@ modules (`rigger-core`, `rigger-schema`) stay that way — their beans get regis
 module. Before adding a module dependency, check the direction: `rigger-api` may depend on
 `rigger-operator`, never the reverse.
 
+## Streaming responses
+
+`StreamingResponseBody` works for plain chunked output, but writing SSE framing into one had its
+streaming thread interrupted immediately — correct headers, then an open stream that never delivered
+a byte, with no error anywhere. Use `SseEmitter` for Server-Sent Events and do the blocking read on
+a virtual thread.
+
+Don't distinguish two framings of the same resource by `produces` on one path. Content negotiation
+has to break the tie for a wildcard `Accept` (which `riggerctl` sends) and its choice is not the one
+you want. Use separate paths.
+
 ## Verifying
 
 ```bash

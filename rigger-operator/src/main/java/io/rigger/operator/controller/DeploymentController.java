@@ -35,7 +35,7 @@ public class DeploymentController {
     public int reconcile() {
         var desired = store.findAllByKind("Deployment");
         var actual  = swarm.listManaged();          // returns List<Service> from docker-java
-        var plan    = differ.diffDockerJava(desired, actual, DeploymentSpec.class, swarm::computeSpecHash);
+        var plan    = differ.diff(desired, actual, DeploymentSpec.class, swarm::computeSpecHash);
 
         if (plan.isEmpty()) {
             log.debug("DeploymentController: {} in sync", plan.unchanged());
@@ -59,9 +59,9 @@ public class DeploymentController {
             }
         }
 
-        for (var item : plan.toUpdateDocker()) {
+        for (var item : plan.toUpdate()) {
             try {
-                swarm.update((Service) item.existing(), item.meta(), (DeploymentSpec) item.spec());
+                swarm.update(item.existing(), item.meta(), (DeploymentSpec) item.spec());
                 eventBus.publish(new ResourceAppliedEvent(
                     new ResourceRef(ResourceKind.DEPLOYMENT, item.meta().namespace(), item.meta().name()),
                     "operator", false));
@@ -71,7 +71,7 @@ public class DeploymentController {
             }
         }
 
-        for (var svc : plan.toDeleteDocker()) {
+        for (var svc : plan.toDelete()) {
             try {
                 String namespace = svc.getSpec() != null && svc.getSpec().getLabels() != null
                     ? svc.getSpec().getLabels().get("rigger.io/namespace") : "unknown";

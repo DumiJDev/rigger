@@ -10,9 +10,9 @@ and an Angular console, built as a Java 21+ / Spring Boot 4.1 Maven multi-module
 |---|---|
 | `rigger-core` | Domain records (DeploymentSpec, ServiceSpec, ClusterSpec, RiggerIdentity, …), exceptions. No framework deps. Most complete/stable module. |
 | `rigger-events` | Typed event records + `RiggerEventBus` (wraps Spring's `ApplicationEventPublisher`). |
-| `rigger-manifest` | Parses/validates `rigger.io/v1` YAML manifests (`ManifestParser`, `ManifestValidator`), plus `ComposeConverter` for docker-compose input (not yet wired into apply path — see Known Gaps). |
+| `rigger-manifest` | Parses/validates `rigger.io/v1` YAML manifests (`ManifestParser`, `ManifestValidator`), plus `ComposeConverter`, which `WorkloadController.apply()` routes docker-compose input through. |
 | `rigger-schema` | JSON Schema (draft 2020-12) definitions per kind, validated via `ManifestSchemaValidator` before domain validation. Deliberately framework-free — `ManifestSchemaValidator` is registered as a Spring bean by `rigger-api`'s `ApiAutoConfiguration`, not annotated itself. |
-| `rigger-swarm-adapter` | Talks to Docker Swarm via **docker-java 3.7.1** (not raw HTTP). `ServiceAdapter`/`NodeAdapter`/`ConfigAdapter`/`SecretAdapter`. Contains a legacy hand-rolled `swarm/model/*` package predating the docker-java migration — still referenced by `ReconcilePlan` in `rigger-operator`; `DockerJavaReconcilePlan` is the real replacement (cleanup candidate, see Known Gaps). |
+| `rigger-swarm-adapter` | Talks to Docker Swarm via **docker-java 3.7.1** (not raw HTTP). `ServiceAdapter`/`NodeAdapter`/`ConfigAdapter`/`SecretAdapter`. Note that docker-java has its own `SwarmNode`/`SwarmNodeSpec` types — the adapters use those, not hand-rolled equivalents. |
 | `rigger-provisioner` | SSH-based cluster provisioning (Apache Mina SSHD) — Docker install, `docker swarm init/join`, `ClusterOrchestrator` for `cluster up`/`sync`. |
 | `rigger-security` | Auth (`UserStore`, `JwtTokenService`, `RiggerAuthenticationFilter`), RBAC (`RbacPolicyEngine`), secret encryption (`SecretEncryptor`, AES-256-GCM), audit (`AuditService`). |
 | `rigger-store` | Spring Data JPA + SQLite (WAL mode), Flyway migrations in `db/migration/`. |
@@ -197,17 +197,20 @@ Remaining gaps are feature-completion and polish:
   Deployment's tasks — no Prometheus dependency. Cost scales with task count per HPA cycle
   (default 30s); clusters with many tasks per Deployment will feel this as added latency,
   not a correctness issue.
-- `ComposeConverter` (in `rigger-manifest`) exists but nothing detects/routes docker-compose
-  input to it from `ApplyCommand`/`WorkloadController.apply()` — README's compose support claim
-  is currently false.
 - The console covers login, namespace switching, topology (graph + list), the four workload kinds,
   pods with SSE log streaming, YAML apply, cluster ops, GitOps config, audit and users. Not yet
   done there: editing a resource's YAML in place (apply is create/replace only), and any
   time-series charting — the metrics endpoints are point-in-time samples, so the console would have
   to keep its own window.
-- Cleanup candidates (do last, verify build after each): legacy `swarm/model/*` classes in
-  `rigger-swarm-adapter` (superseded by docker-java types), duplicate unused CLI command classes
-  in `rigger-cli/command/user/` (the real ones are static inner classes in `UserCommand`).
+
+- **Compose input** is detected server-side by content (top-level `services` map, no
+  `apiVersion`/`kind`) and converted by `ComposeConverter` before anything else in
+  `WorkloadController.apply()`, so the CLI and console both get it without knowing the format.
+  Converted manifests carry no source YAML, so JSON-Schema validation is skipped for them — the
+  converter builds domain records directly and their constructors do the validating.
+- **Dry run must not persist.** `apply(dryRun=true)` stops after parse, RBAC and schema validation
+  and reports each resource as `validated`. This was broken originally: `dryRun` only suppressed the
+  audit payload while still saving, so a "validation" really applied and then reconciled onto Swarm.
 
 ## Fase 2 final verification — bugs found and fixed
 

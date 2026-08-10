@@ -28,7 +28,7 @@ export class LogStreamService {
     const controller = new AbortController();
     const url =
       `/api/v1/namespaces/${encodeURIComponent(namespace)}/pods/${encodeURIComponent(pod)}` +
-      `/logs?follow=${follow}`;
+      `/logs/stream?follow=${follow}`;
 
     void (async () => {
       try {

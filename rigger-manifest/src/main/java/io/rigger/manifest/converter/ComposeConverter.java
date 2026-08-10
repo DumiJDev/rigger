@@ -41,14 +41,43 @@ public class ComposeConverter {
      * @return List of parsed manifests ready for apply.
      */
     public List<ParsedManifest> convert(Path composePath, String namespace) throws IOException {
-        var root = yaml.readTree(composePath.toFile());
-        var results = new ArrayList<ParsedManifest>();
-        String source = composePath.toString();
+        return convert(yaml.readTree(composePath.toFile()), namespace, composePath.toString());
+    }
 
+    /**
+     * Converts Compose content already in memory — the apply endpoint receives the file as a
+     * string, so it never has a path to hand.
+     */
+    public List<ParsedManifest> convertString(String composeYaml, String namespace, String source)
+            throws IOException {
+        return convert(yaml.readTree(composeYaml), namespace, source);
+    }
+
+    /**
+     * Whether the given YAML looks like a Compose file rather than a Rigger manifest.
+     *
+     * <p>Keyed on a top-level {@code services} map with no {@code apiVersion}/{@code kind}: a Rigger
+     * manifest always carries both, and a Compose file never does. Returns false for anything
+     * unparseable so the caller reports the real manifest error rather than a misleading
+     * "not valid Compose".
+     */
+    public boolean isCompose(String content) {
+        try {
+            var root = yaml.readTree(content);
+            return root != null
+                && root.path("services").isObject()
+                && root.path("apiVersion").isMissingNode()
+                && root.path("kind").isMissingNode();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private List<ParsedManifest> convert(JsonNode root, String namespace, String source) {
+        var results = new ArrayList<ParsedManifest>();
         convertServices(root.path("services"), namespace, source, results);
         convertConfigs(root.path("configs"), namespace, source, results);
         convertSecrets(root.path("secrets"), namespace, source, results);
-
         return results;
     }
 

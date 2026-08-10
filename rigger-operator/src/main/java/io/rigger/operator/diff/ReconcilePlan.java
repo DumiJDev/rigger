@@ -1,22 +1,22 @@
 package io.rigger.operator.diff;
 
+import com.github.dockerjava.api.model.Service;
 import io.rigger.core.domain.resource.ObjectMeta;
-import io.rigger.swarm.model.SwarmService;
 import java.util.List;
 
 /**
- * The output of comparing desired state (store) with actual state (Swarm API).
- * Passed to the controller to perform the minimum number of Docker API calls.
+ * The output of comparing desired state (store) with actual state (Swarm), holding docker-java
+ * {@link Service} objects directly.
  *
- * @param toCreate Resources in the store with no corresponding Swarm service.
- * @param toUpdate Resources in the store whose spec differs from the Swarm service.
- * @param toDelete Swarm services with no corresponding resource in the store (drift or manual deletion).
- * @param unchanged Count of resources that are already in sync.
+ * @param toCreate  Resources in the store with no corresponding Swarm service.
+ * @param toUpdate  Resources whose spec differs from the Swarm service.
+ * @param toDelete  Swarm services with no corresponding resource in the store (drift or manual deletion).
+ * @param unchanged Count of resources already in sync.
  */
 public record ReconcilePlan(
         List<DesiredResource> toCreate,
         List<UpdatePair> toUpdate,
-        List<SwarmService> toDelete,
+        List<Service> toDelete,
         int unchanged
 ) {
     public boolean isEmpty() {
@@ -30,6 +30,6 @@ public record ReconcilePlan(
     /** A desired resource with no existing Swarm counterpart. */
     public record DesiredResource(ObjectMeta meta, Object spec) {}
 
-    /** An existing Swarm service that needs to be updated. */
-    public record UpdatePair(SwarmService existing, ObjectMeta meta, Object spec) {}
+    /** An existing Swarm service that needs updating to match the desired spec. */
+    public record UpdatePair(Service existing, ObjectMeta meta, Object spec) {}
 }

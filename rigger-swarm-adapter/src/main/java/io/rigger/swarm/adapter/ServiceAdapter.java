@@ -7,8 +7,6 @@ import io.rigger.core.domain.resource.*;
 import io.rigger.core.util.MemoryUnit;
 import io.rigger.swarm.client.DockerApiException;
 import io.rigger.swarm.client.DockerClientFactory;
-import io.rigger.swarm.model.SwarmTask;
-import io.rigger.swarm.model.SwarmTaskStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

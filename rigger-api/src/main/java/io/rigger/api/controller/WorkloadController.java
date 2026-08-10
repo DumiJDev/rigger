@@ -9,6 +9,7 @@ import io.rigger.core.exception.*;
 import io.rigger.core.util.UlidGenerator;
 import io.rigger.events.bus.RiggerEventBus;
 import io.rigger.events.model.*;
+import io.rigger.manifest.converter.ComposeConverter;
 import io.rigger.manifest.parser.*;
 import io.rigger.schema.ManifestSchemaValidator;
 import io.rigger.security.audit.AuditService;
@@ -24,6 +25,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -43,6 +45,7 @@ public class WorkloadController {
 
     private final ResourceRepository   store;
     private final ManifestParser       parser;
+    private final ComposeConverter     composeConverter;
     private final ManifestSchemaValidator schemaValidator;
     private final RbacPolicyEngine     rbac;
     private final AuditService         audit;
@@ -54,12 +57,14 @@ public class WorkloadController {
     private final ObjectMapper         mapper = new ObjectMapper();
 
     public WorkloadController(ResourceRepository store, ManifestParser parser,
+                               ComposeConverter composeConverter,
                                ManifestSchemaValidator schemaValidator,
                                RbacPolicyEngine rbac, AuditService audit,
                                RiggerEventBus eventBus, ServiceAdapter swarmAdapter,
                                ConfigAdapter configAdapter, SecretAdapter secretAdapter,
                                SecretEncryptor secretEncryptor) {
         this.store = store; this.parser = parser;
+        this.composeConverter = composeConverter;
         this.schemaValidator = schemaValidator;
         this.rbac = rbac; this.audit = audit;
         this.eventBus = eventBus; this.swarmAdapter = swarmAdapter;
@@ -78,13 +83,23 @@ public class WorkloadController {
         var ctx = ctx(httpReq, namespace);
         rbac.authorize(ctx, "apply", "Deployment");
 
-        var parsed = parser.parseString(req.manifest(), "api");
+        // docker-compose input is converted to Rigger manifests before anything else, so the rest
+        // of this method doesn't care which format arrived. Detection is content-based: a Compose
+        // file has a top-level services map and no apiVersion/kind.
+        boolean isCompose = composeConverter.isCompose(req.manifest());
+        var parsed = isCompose
+            ? composeConverter.convertString(req.manifest(), namespace, "compose")
+            : parser.parseString(req.manifest(), "api");
         var results = new ArrayList<Map<String, Object>>();
 
         for (var pm : parsed) {
             var manifest = pm.manifest();
             rbac.authorize(ctx, "apply", manifest.kind());
-            schemaValidator.validateOrThrow(manifest.kind(), pm.rawYaml());
+            // Converted manifests have no source YAML of their own to validate — the converter
+            // builds domain records directly, which their own constructors already validate.
+            if (pm.rawYaml() != null) {
+                schemaValidator.validateOrThrow(manifest.kind(), pm.rawYaml());
+            }
 
             Object spec = manifest.spec();
             if ("Secret".equals(manifest.kind()) && spec instanceof SecretSpec secretSpec) {
@@ -182,14 +197,65 @@ public class WorkloadController {
      * Plain-text chunked log stream. This is what {@code riggerctl logs} reads (newline-delimited
      * bytes via Okio), so its framing must not change.
      */
-    @GetMapping(value = "/pods/{podName}/logs", produces = MediaType.TEXT_PLAIN_VALUE)
+    /**
+     * Raw newline-delimited log lines, chunked. This is what {@code riggerctl logs} reads.
+     */
+    @GetMapping("/pods/{podName}/logs")
     public ResponseEntity<StreamingResponseBody> podLogs(
             @PathVariable String namespace, @PathVariable String podName,
             @RequestParam(defaultValue = "false") boolean follow,
             HttpServletRequest req) {
+
         String containerId = authorizeAndResolveContainer(namespace, podName, req);
-        StreamingResponseBody body = out -> swarmAdapter.streamLogs(containerId, follow, out);
-        return ResponseEntity.ok().contentType(MediaType.TEXT_PLAIN).body(body);
+        if (containerId == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok().contentType(MediaType.TEXT_PLAIN)
+            .body(out -> swarmAdapter.streamLogs(containerId, follow, out));
+    }
+
+    /**
+     * The same logs as Server-Sent Events, for the browser console.
+     *
+     * <p>A separate path rather than the same path with a different {@code produces}: content
+     * negotiation had to break the tie for a wildcard Accept header — which is what riggerctl
+     * sends — and chose event-stream, so the CLI started receiving {@code data:} prefixes. Distinct
+     * paths make each client's framing unambiguous and independent of header details.
+     */
+    @GetMapping("/pods/{podName}/logs/stream")
+    public ResponseEntity<SseEmitter> podLogsSse(
+            @PathVariable String namespace, @PathVariable String podName,
+            @RequestParam(defaultValue = "false") boolean follow,
+            HttpServletRequest req) {
+
+        String containerId = authorizeAndResolveContainer(namespace, podName, req);
+        if (containerId == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(sseLogs(namespace, podName, containerId, follow));
+    }
+
+    /**
+     * Streams the container's log lines as Server-Sent Events.
+     *
+     * <p>Uses {@link SseEmitter} rather than writing {@code data:} framing into a
+     * {@code StreamingResponseBody}: that sent correct headers but had its streaming thread
+     * interrupted immediately, leaving the browser with an open, permanently empty stream and no
+     * error to explain it.
+     */
+    private SseEmitter sseLogs(String namespace, String podName, String containerId, boolean follow) {
+        // No timeout: a followed stream should stay open until the client goes away.
+        var emitter = new SseEmitter(0L);
+
+        // Docker's log read blocks, so it runs off the request thread; a virtual thread keeps that
+        // cheap even with several viewers open.
+        Thread.ofVirtual().name("pod-logs-" + podName).start(() -> {
+            try (var sink = new SseLineFramingOutputStream(emitter)) {
+                swarmAdapter.streamLogs(containerId, follow, sink);
+                emitter.complete();
+            } catch (Exception e) {
+                // A closed tab arrives here as a broken pipe — routine, not a fault.
+                log.debug("Log stream for {}/{} ended: {}", namespace, podName, e.getMessage());
+                emitter.completeWithError(e);
+            }
+        });
+        return emitter;
     }
 
     /**
@@ -197,28 +263,10 @@ public class WorkloadController {
      * native {@code EventSource} instead of hand-rolling a chunked-body reader. Selected by
      * {@code Accept: text/event-stream}; the plain-text variant above is unaffected.
      */
-    @GetMapping(value = "/pods/{podName}/logs", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public ResponseEntity<StreamingResponseBody> podLogsSse(
-            @PathVariable String namespace, @PathVariable String podName,
-            @RequestParam(defaultValue = "false") boolean follow,
-            HttpServletRequest req) {
-        String containerId = authorizeAndResolveContainer(namespace, podName, req);
-        StreamingResponseBody body = out -> {
-            try (var sse = new SseLineFramingOutputStream(out)) {
-                swarmAdapter.streamLogs(containerId, follow, sse);
-            }
-        };
-        return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM).body(body);
-    }
-
     private String authorizeAndResolveContainer(String namespace, String podName, HttpServletRequest req) {
         var ctx = ctx(req, namespace);
         rbac.authorize(ctx, "logs", "Pod");
-        String containerId = resolveContainerId(namespace, podName);
-        if (containerId == null) {
-            throw new ResourceNotFoundException(ResourceKind.POD, namespace, podName);
-        }
-        return containerId;
+        return resolveContainerId(namespace, podName);
     }
 
     @GetMapping("/secrets")

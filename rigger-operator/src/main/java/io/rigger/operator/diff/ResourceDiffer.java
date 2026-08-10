@@ -34,7 +34,7 @@ public class ResourceDiffer {
      *               otherwise the diff never converges: it'll see a mismatch and re-update on
      *               every single cycle forever.
      */
-    public <T> DockerJavaReconcilePlan diffDockerJava(
+    public <T> ReconcilePlan diff(
             List<ResourceEntity> desired,
             List<Service> actual,
             Class<T> specClass,
@@ -51,7 +51,7 @@ public class ResourceDiffer {
 
         var desiredKeys = new HashSet<String>();
         var toCreate    = new ArrayList<ReconcilePlan.DesiredResource>();
-        var toUpdate    = new ArrayList<DockerJavaReconcilePlan.UpdatePair>();
+        var toUpdate    = new ArrayList<ReconcilePlan.UpdatePair>();
         int unchanged   = 0;
 
         for (var entity : desired) {
@@ -71,7 +71,7 @@ public class ResourceDiffer {
             if (existing == null) {
                 toCreate.add(new ReconcilePlan.DesiredResource(meta, spec));
             } else if (needsUpdate(meta, spec, existing, hashFn)) {
-                toUpdate.add(new DockerJavaReconcilePlan.UpdatePair(existing, meta, spec));
+                toUpdate.add(new ReconcilePlan.UpdatePair(existing, meta, spec));
             } else {
                 unchanged++;
             }
@@ -86,12 +86,12 @@ public class ResourceDiffer {
             })
             .toList();
 
-        return new DockerJavaReconcilePlan(toCreate, toUpdate, toDelete, unchanged);
+        return new ReconcilePlan(toCreate, toUpdate, toDelete, unchanged);
     }
 
     /** Convenience overload — infers DeploymentSpec as specClass, hashes on the spec object alone. */
-    public DockerJavaReconcilePlan diffDockerJava(List<ResourceEntity> desired, List<Service> actual) {
-        return diffDockerJava(desired, actual, io.rigger.core.domain.resource.DeploymentSpec.class,
+    public ReconcilePlan diff(List<ResourceEntity> desired, List<Service> actual) {
+        return diff(desired, actual, io.rigger.core.domain.resource.DeploymentSpec.class,
             (meta, spec) -> Integer.toHexString(spec.hashCode()));
     }
 
