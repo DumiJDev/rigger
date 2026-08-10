@@ -1,16 +1,12 @@
 package io.rigger.operator.autoscaler;
 
 /**
- * Abstraction over the metrics backend used by the HPA controller.
+ * Abstraction over the metrics backend, used by the HPA controller and by
+ * {@code MetricsSampler} when recording history.
  *
- * <p>Phase 4 will provide two implementations:
- * <ul>
- *   <li>{@code PrometheusMetricsSource} — queries Prometheus HTTP API</li>
- *   <li>{@code DockerStatsMetricsSource} — uses Docker API task stats (no Prometheus needed)</li>
- * </ul>
- *
- * <p>This interface is a stub that returns 0 until Phase 4 is implemented.
- * Tests inject a mock implementation.
+ * <p>{@link DockerStatsMetricsSource} is the shipped implementation — Docker task stats, no
+ * Prometheus required. {@link #STUB} exists so tests and Swarm-less runs get zeros instead of
+ * failures, and is registered only when nothing else is.
  */
 public interface MetricsSource {
 
@@ -33,6 +29,6 @@ public interface MetricsSource {
      */
     default double averageMemoryPercent(String namespace, String name) { return 0; }
 
-    /** Stub implementation — returns 0 until Prometheus integration is wired. */
+    /** Fallback that reports no load, for tests and for runs with no reachable Swarm. */
     MetricsSource STUB = (ns, name) -> 0;
 }

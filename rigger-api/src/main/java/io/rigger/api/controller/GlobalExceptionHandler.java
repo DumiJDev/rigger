@@ -7,7 +7,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /** Maps domain exceptions to RFC 7807 Problem Details responses. */
 @RestControllerAdvice
@@ -27,11 +29,47 @@ public class GlobalExceptionHandler {
             .body(ErrorResponse.of(404, "Not Found", e.getMessage(), req.getRequestURI()));
     }
 
+    /**
+     * A request that matched no mapping. Without this it fell through to the generic handler and
+     * came back as a 500 with a correlation ID — so a client typo looked like a server fault, and
+     * every mistyped URL logged a stack trace as if something had broken.
+     *
+     * <p>The URI is already in the response; the exception message adds nothing, so it is not used.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> noHandler(NoResourceFoundException e, HttpServletRequest req) {
+        return ResponseEntity.status(404)
+            .body(ErrorResponse.of(404, "Not Found", "No endpoint for this request", req.getRequestURI()));
+    }
+
+    /**
+     * An unparseable or wrongly-typed request body. Also a 500 before this, which pointed the
+     * caller at a server fault when the body was theirs to fix.
+     *
+     * <p>Only the most specific message is returned — the full Jackson message names internal
+     * classes and deserialisation features, which is server detail, so the rest is logged instead.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> unreadableBody(HttpMessageNotReadableException e, HttpServletRequest req) {
+        log.debug("Unreadable request body on {}: {}", req.getRequestURI(), e.getMessage());
+        return ResponseEntity.badRequest()
+            .body(ErrorResponse.of(400, "Bad Request", "Request body is malformed or has a wrong field type",
+                req.getRequestURI()));
+    }
+
     @ExceptionHandler(ManifestValidationException.class)
     public ResponseEntity<ErrorResponse> validation(ManifestValidationException e, HttpServletRequest req) {
         return ResponseEntity.status(422)
             .body(ErrorResponse.of(422, "Unprocessable Entity",
                 String.join("; ", e.violations()), req.getRequestURI()));
+    }
+
+    @ExceptionHandler(InvalidRequestException.class)
+    public ResponseEntity<ErrorResponse> invalidRequest(InvalidRequestException e, HttpServletRequest req) {
+        // The message is authored by us and names the offending parameter, so returning it is both
+        // safe and the only way the caller can tell a typo from a genuinely empty result.
+        return ResponseEntity.badRequest()
+            .body(ErrorResponse.of(400, "Bad Request", e.getMessage(), req.getRequestURI()));
     }
 
     @ExceptionHandler(ProvisioningException.class)
