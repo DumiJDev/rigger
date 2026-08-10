@@ -5,7 +5,9 @@ import io.rigger.core.exception.AccessDeniedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Evaluates RBAC policy for every authorised operation.
@@ -52,6 +54,19 @@ public class RbacPolicyEngine {
         Permission.of(RiggerRole.GITOPS_AGENT, "apply", "Secret")
     );
 
+    /**
+     * Operations only CLUSTER_ADMIN can perform. These are enforced by <em>absence</em> from
+     * {@link #POLICY} (every other role falls through to a denial), so they have to be listed
+     * separately for {@link #permissionsFor} to describe an admin's capabilities accurately.
+     * Keep in sync with the controllers that call {@code authorize} with these pairs.
+     */
+    private static final Map<String, Set<String>> ADMIN_ONLY = Map.of(
+        "Cluster", Set.of("get", "up", "sync"),
+        "GitOps",  Set.of("configure"),
+        "User",    Set.of("get", "create", "delete"),
+        "Audit",   Set.of("get")
+    );
+
     public void authorize(RiggerContext ctx, String action, String resource) {
         var identity = ctx.identity();
 
@@ -81,5 +96,37 @@ public class RbacPolicyEngine {
     public boolean isAllowed(RiggerContext ctx, String action, String resource) {
         try { authorize(ctx, action, resource); return true; }
         catch (AccessDeniedException e) { return false; }
+    }
+
+    /**
+     * The (action, resource) pairs a role may perform, as a resource → actions map.
+     *
+     * <p>Exposed so the console can drive its own affordances (hiding or disabling actions the
+     * caller can't perform) from the same table this engine enforces, instead of a hand-copied
+     * matrix in the frontend that silently drifts the first time this one changes. This is for
+     * presentation only — the per-request {@link #authorize} check remains the sole enforcement.
+     */
+    public Map<String, Set<String>> permissionsFor(RiggerRole role) {
+        if (role != RiggerRole.CLUSTER_ADMIN) {
+            return POLICY.stream()
+                .filter(p -> p.role() == role)
+                .collect(Collectors.groupingBy(Permission::resource,
+                    Collectors.mapping(Permission::action, Collectors.toSet())));
+        }
+
+        // CLUSTER_ADMIN bypasses the table entirely in authorize(), so there are no rows to read
+        // back. Report the union of every action any role may perform on each resource, plus the
+        // admin-only operations below. Crucially this is still *per resource* — reporting a flat
+        // cross-product would tell the console that a Secret can be scaled or GitOps can stream
+        // logs, and it would render buttons for operations that don't exist.
+        var byResource = POLICY.stream()
+            .collect(Collectors.groupingBy(Permission::resource,
+                Collectors.mapping(Permission::action, Collectors.toCollection(java.util.HashSet::new))));
+
+        ADMIN_ONLY.forEach((resource, actions) ->
+            byResource.computeIfAbsent(resource, r -> new java.util.HashSet<>()).addAll(actions));
+
+        return byResource.entrySet().stream()
+            .collect(Collectors.toMap(Map.Entry::getKey, e -> Set.copyOf(e.getValue())));
     }
 }

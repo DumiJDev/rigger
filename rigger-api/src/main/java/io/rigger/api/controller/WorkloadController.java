@@ -2,6 +2,7 @@ package io.rigger.api.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.rigger.api.dto.*;
+import io.rigger.api.stream.SseLineFramingOutputStream;
 import io.rigger.core.domain.resource.*;
 import io.rigger.core.domain.security.*;
 import io.rigger.core.exception.*;
@@ -170,21 +171,47 @@ public class WorkloadController {
         return ResponseEntity.ok(pods);
     }
 
-    @GetMapping("/pods/{podName}/logs")
+    /**
+     * Plain-text chunked log stream. This is what {@code riggerctl logs} reads (newline-delimited
+     * bytes via Okio), so its framing must not change.
+     */
+    @GetMapping(value = "/pods/{podName}/logs", produces = MediaType.TEXT_PLAIN_VALUE)
     public ResponseEntity<StreamingResponseBody> podLogs(
             @PathVariable String namespace, @PathVariable String podName,
             @RequestParam(defaultValue = "false") boolean follow,
             HttpServletRequest req) {
+        String containerId = authorizeAndResolveContainer(namespace, podName, req);
+        StreamingResponseBody body = out -> swarmAdapter.streamLogs(containerId, follow, out);
+        return ResponseEntity.ok().contentType(MediaType.TEXT_PLAIN).body(body);
+    }
+
+    /**
+     * Same logs, re-framed as Server-Sent Events so the browser console can consume them with a
+     * native {@code EventSource} instead of hand-rolling a chunked-body reader. Selected by
+     * {@code Accept: text/event-stream}; the plain-text variant above is unaffected.
+     */
+    @GetMapping(value = "/pods/{podName}/logs", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public ResponseEntity<StreamingResponseBody> podLogsSse(
+            @PathVariable String namespace, @PathVariable String podName,
+            @RequestParam(defaultValue = "false") boolean follow,
+            HttpServletRequest req) {
+        String containerId = authorizeAndResolveContainer(namespace, podName, req);
+        StreamingResponseBody body = out -> {
+            try (var sse = new SseLineFramingOutputStream(out)) {
+                swarmAdapter.streamLogs(containerId, follow, sse);
+            }
+        };
+        return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM).body(body);
+    }
+
+    private String authorizeAndResolveContainer(String namespace, String podName, HttpServletRequest req) {
         var ctx = ctx(req, namespace);
         rbac.authorize(ctx, "logs", "Pod");
-
         String containerId = resolveContainerId(namespace, podName);
         if (containerId == null) {
             throw new ResourceNotFoundException(ResourceKind.POD, namespace, podName);
         }
-
-        StreamingResponseBody body = out -> swarmAdapter.streamLogs(containerId, follow, out);
-        return ResponseEntity.ok().contentType(MediaType.TEXT_PLAIN).body(body);
+        return containerId;
     }
 
     @GetMapping("/secrets")

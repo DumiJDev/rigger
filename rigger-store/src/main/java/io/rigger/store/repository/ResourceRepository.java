@@ -29,4 +29,8 @@ public interface ResourceRepository extends JpaRepository<ResourceEntity, String
 
     @Query("SELECT r FROM ResourceEntity r WHERE r.kind = :kind")
     List<ResourceEntity> findAllByKind(@Param("kind") String kind);
+
+    /** Distinct namespaces that currently hold at least one resource — drives the console's namespace picker. */
+    @Query("SELECT DISTINCT r.namespace FROM ResourceEntity r ORDER BY r.namespace")
+    List<String> findDistinctNamespaces();
 }
