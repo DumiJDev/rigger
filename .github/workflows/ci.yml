@@ -280,7 +280,12 @@ jobs:
             || { echo "ci-web never reconciled onto Swarm"; docker service ps rigger-default-ci-web --no-trunc || true; exit 1; }
 
           $CLI get pods -n default -i
-          POD=$($CLI get pods -n default -i | awk 'NR>1 && NF {print $1; exit}')
+          # Skip the dashed separator explicitly. `NR>1 && NF` matched it — a line of dashes is one
+          # field — so $1 became "------…", and Picocli reads an argument starting with `--` as the
+          # end-of-options marker, which made <pod> vanish. The failure then read as "Missing required
+          # parameter: '<pod>'", three inferences away from a header line being parsed as data.
+          POD=$($CLI get pods -n default -i | awk 'NR>1 && NF && $1 !~ /^-+$/ {print $1; exit}')
+          echo "pod: ${POD:-<none>}"
 
           if [ -z "$POD" ]; then
             echo "No pods found in namespace default after apply; dumping diagnostics"
