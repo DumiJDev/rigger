@@ -266,12 +266,18 @@ jobs:
 
           $CLI apply -f /tmp/ci-manifests.yaml -n default -i
 
-          # Wait for reconciliation onto Swarm, then for a running task.
+          # Wait for THIS Deployment to reconcile onto Swarm, by name. Waiting for "any service with
+          # a running replica" broke the moment ingress was enabled in this job: the Traefik
+          # controller reports 1/1 within seconds, so the loop exited on its first iteration, ci-web
+          # had not reconciled yet, `get pods` was empty, and `riggerctl logs` then failed with a
+          # missing argument — three steps downstream of the actual problem.
           for i in $(seq 1 40); do
-            docker service ls --format '{{.Replicas}}' | grep -q '^[1-9]' && break
+            [ "$(docker service ls --filter name=rigger-default-ci-web --format '{{.Replicas}}')" = "1/1" ] && break
             sleep 5
           done
           docker service ls
+          docker service ls --filter name=rigger-default-ci-web --format '{{.Replicas}}' | grep -q '^1/1$' \
+            || { echo "ci-web never reconciled onto Swarm"; docker service ps rigger-default-ci-web --no-trunc || true; exit 1; }
 
           $CLI get pods -n default -i
           POD=$($CLI get pods -n default -i | awk 'NR>1 && NF {print $1; exit}')
