@@ -118,6 +118,8 @@ public class LoginCommand implements Callable<Integer> {
             return new String(System.console().readPassword("Password: "));
         }
         System.out.print("Password: ");
-        return new java.util.Scanner(System.in).nextLine();
+        try (var scanner = new java.util.Scanner(System.in)) {
+            return scanner.nextLine();
+        }
     }
 }

@@ -109,8 +109,24 @@ jobs:
       - name: Stage jars
         run: |
           mkdir -p staging
-          cp rigger-server/target/rigger-server-1.0.0-SNAPSHOT.jar staging/rigger-server.jar
-          cp rigger-cli/target/riggerctl.jar staging/riggerctl.jar
+          if [ -f rigger-server/target/rigger-server-1.0.0-SNAPSHOT.jar ]; then
+            cp rigger-server/target/rigger-server-1.0.0-SNAPSHOT.jar staging/rigger-server.jar
+          else
+            echo "rigger-server jar not found in rigger-server/target/ — listing that directory:"
+            ls -la rigger-server/target || true
+            echo "Contents of repo root:"
+            ls -la || true
+            echo "Failing early to surface diagnostics"; exit 1
+          fi
+
+          if [ -f rigger-cli/target/riggerctl.jar ]; then
+            cp rigger-cli/target/riggerctl.jar staging/riggerctl.jar
+          else
+            echo "riggerctl jar not found in rigger-cli/target/ — listing that directory:"
+            ls -la rigger-cli/target || true
+            echo "Failing early to surface diagnostics"; exit 1
+          fi
+
           ls -l staging
 
       - uses: actions/upload-artifact@v7
@@ -258,7 +274,19 @@ jobs:
           docker service ls
 
           $CLI get pods -n default -i
-          POD=$($CLI get pods -n default -i | awk 'NR>2 {print $1; exit}')
+          POD=$($CLI get pods -n default -i | awk 'NR>1 && NF {print $1; exit}')
+
+          if [ -z "$POD" ]; then
+            echo "No pods found in namespace default after apply; dumping diagnostics"
+            echo "--- deployments ---"
+            $CLI get deployments -n default -i || true
+            echo "--- services ---"
+            $CLI get services -n default -i || true
+            echo "--- docker service ls ---"
+            docker service ls || true
+            echo "--- end diagnostics ---"
+            exit 1
+          fi
 
           # riggerctl reads raw lines. When the two log framings shared one path, content
           # negotiation handed the CLI the SSE variant and it started printing "data:" prefixes.
