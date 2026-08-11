@@ -371,7 +371,7 @@ public class ComposeConverter {
 
             var ports = convertPorts(svc.path("ports"), path, issues);
             boolean published = ports.stream().anyMatch(PortMapping::published);
-            convertExpose(svc.path("expose"), path, ports, issues);
+            convertExpose(svc.path("expose"), path, ports, published, issues);
             if (ports.isEmpty()) return;
 
             // A Compose port with a host side means "reachable from outside the cluster", which is
@@ -577,8 +577,13 @@ public class ComposeConverter {
         return ports;
     }
 
-    /** {@code expose} is internal-only, which is exactly a ClusterIP port. */
-    private void convertExpose(JsonNode node, String path, List<PortMapping> ports, List<Issue> issues) {
+    /**
+     * {@code expose} is internal-only, which is exactly a ClusterIP port — as long as the service
+     * publishes nothing else. {@code published} is passed in so the report doesn't promise
+     * "internal only" for a Service that the very next issue says is a LoadBalancer.
+     */
+    private void convertExpose(JsonNode node, String path, List<PortMapping> ports,
+                               boolean published, List<Issue> issues) {
         if (node == null || !node.isArray()) return;
         node.forEach(p -> {
             String raw = p.asText();
@@ -593,8 +598,10 @@ public class ComposeConverter {
             if (ports.stream().anyMatch(m -> m.targetPort() == port)) return;   // already published
             ports.add(new PortMapping(port, port, protocol, false, true));
             issues.add(new Issue(Severity.INFO, path + ".expose",
-                "port " + port + " became a ClusterIP Service port — reachable inside the cluster "
-                + "only, matching expose: semantics."));
+                published
+                    ? "port " + port + " became a Service port."
+                    : "port " + port + " became a ClusterIP Service port — reachable inside the "
+                      + "cluster only, matching expose: semantics."));
         });
     }
 

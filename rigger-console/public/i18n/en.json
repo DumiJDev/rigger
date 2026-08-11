@@ -5,6 +5,18 @@
   },
   "apply": {
     "applied": "{{count}} resource(s) applied",
+    "compose": {
+      "applyConverted": "Apply converted YAML",
+      "blocked": "Applying the compose file is refused while these errors stand: the workload would run, but it would not be the workload described. Fix the compose file, or edit the YAML below and apply that.",
+      "convert": "Convert",
+      "detected": "This looks like a docker-compose file. Convert it first to see what Rigger can and cannot express.",
+      "issuesTitle": "Conversion report",
+      "noIssues": "Nothing was lost in the conversion.",
+      "path": "Compose path",
+      "previewTitle": "Generated rigger.io/v1 YAML",
+      "reviewFirst": "Review the conversion below, then apply.",
+      "severity": "Severity"
+    },
     "dryRun": "Validate without applying",
     "empty": "Write or paste a manifest first",
     "failed": "Could not apply the manifest",
