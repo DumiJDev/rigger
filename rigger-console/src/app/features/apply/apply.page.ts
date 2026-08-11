@@ -18,35 +18,7 @@ import { PageHeader } from '../../shared/page-header';
  * before anything is applied. What is then applied is the YAML on screen, not the Compose text — what
  * you see is what you get.
  *
- * <p>PLACEHOLDER STRINGS: every literal in {@link COMPOSE_TEXT} needs a translation key
- * (`apply.compose.*`) in public/i18n/{pt,en}.json. They are collected in one object so the swap to
- * `t('apply.compose.…')` is a single edit.
  */
-const COMPOSE_TEXT = {
-  /** apply.compose.detected */
-  detected:
-    'This looks like a docker-compose file. Convert it first to see what Rigger can and cannot express.',
-  /** apply.compose.convert */
-  convert: 'Convert',
-  /** apply.compose.previewTitle */
-  previewTitle: 'Generated rigger.io/v1 YAML',
-  /** apply.compose.issuesTitle */
-  issuesTitle: 'Conversion report',
-  /** apply.compose.noIssues */
-  noIssues: 'Nothing was lost in the conversion.',
-  /** apply.compose.blocked */
-  blocked:
-    'Applying the compose file is refused while these errors stand: the workload would run, but it would not be the workload described. Fix the compose file, or edit the YAML below and apply that.',
-  /** apply.compose.reviewFirst */
-  reviewFirst: 'Review the conversion below, then apply.',
-  /** apply.compose.applyConverted */
-  applyConverted: 'Apply converted YAML',
-  /** apply.compose.severity */
-  severity: 'Severity',
-  /** apply.compose.path */
-  path: 'Compose path',
-} as const;
-
 @Component({
   selector: 'r-apply',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -73,7 +45,7 @@ const COMPOSE_TEXT = {
               color: var(--color-info);
             "
           >
-            {{ text.detected }}
+            {{ t('apply.compose.detected') }}
           </p>
         }
 
@@ -91,7 +63,7 @@ const COMPOSE_TEXT = {
 
           @if (looksLikeCompose()) {
             <button type="button" class="btn" [disabled]="busy()" (click)="preview()">
-              {{ text.convert }}
+              {{ t('apply.compose.convert') }}
             </button>
           }
 
@@ -105,7 +77,7 @@ const COMPOSE_TEXT = {
               busy()
                 ? t('common.loading')
                 : conversion()
-                  ? text.applyConverted
+                  ? t('apply.compose.applyConverted')
                   : t('apply.submit')
             }}
           </button>
@@ -134,31 +106,31 @@ const COMPOSE_TEXT = {
                 color: var(--color-error);
               "
             >
-              {{ text.blocked }}
+              {{ t('apply.compose.blocked') }}
             </p>
           }
 
-          <h3 class="mt-5 text-sm font-semibold">{{ text.previewTitle }}</h3>
+          <h3 class="mt-5 text-sm font-semibold">{{ t('apply.compose.previewTitle') }}</h3>
           <pre
             class="table-wrap mt-2 max-h-80 overflow-auto p-3 font-mono text-xs leading-relaxed"
             >{{ conv.yaml }}</pre
           >
 
-          <h3 class="mt-5 text-sm font-semibold">{{ text.issuesTitle }}</h3>
+          <h3 class="mt-5 text-sm font-semibold">{{ t('apply.compose.issuesTitle') }}</h3>
           @if (!conv.issues.length) {
-            <p class="muted mt-2 text-sm">{{ text.noIssues }}</p>
+            <p class="muted mt-2 text-sm">{{ t('apply.compose.noIssues') }}</p>
           } @else {
             <div class="table-wrap mt-2">
               <table class="data">
                 <thead>
                   <tr>
-                    <th>{{ text.severity }}</th>
-                    <th>{{ text.path }}</th>
+                    <th>{{ t('apply.compose.severity') }}</th>
+                    <th>{{ t('apply.compose.path') }}</th>
                     <th>{{ t('common.message') }}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  @for (issue of conv.issues; track issue.path + issue.message) {
+                  @for (issue of sortedIssues(); track issue.path + issue.message) {
                     <tr>
                       <td class="font-medium" [style.color]="severityColor(issue)">
                         {{ issue.severity }}
@@ -204,7 +176,6 @@ const COMPOSE_TEXT = {
 export class ApplyPage {
   private readonly api = inject(ApiService);
   readonly ns = inject(NamespaceService);
-  readonly text = COMPOSE_TEXT;
 
   manifest = '';
   dryRun = false;
@@ -233,6 +204,18 @@ export class ApplyPage {
     this.conversion.set(null);
   }
 
+  /**
+   * ERRORs first, then WARNINGs, then INFO — the server reports in Compose-file order, which put a
+   * blocking top-level `volumes:` error underneath a dozen warnings where it read as a footnote.
+   * Order within a severity is left alone, so paths still follow the file.
+   */
+  readonly sortedIssues = computed(() => {
+    const rank = { ERROR: 0, WARNING: 1, INFO: 2 } as const;
+    return [...(this.conversion()?.issues ?? [])].sort(
+      (a, b) => rank[a.severity] - rank[b.severity],
+    );
+  });
+
   severityColor(issue: ComposeIssue): string {
     if (issue.severity === 'ERROR') return 'var(--color-error)';
     if (issue.severity === 'WARNING') return 'var(--color-warn)';
@@ -249,7 +232,7 @@ export class ApplyPage {
     try {
       this.conversion.set(await firstValueFrom(this.api.convert(this.ns.current(), this.manifest)));
       this.failed.set(false);
-      this.message.set(this.text.reviewFirst);
+      this.message.set(this.transloco.translate('apply.compose.reviewFirst'));
     } catch (e) {
       this.failed.set(true);
       this.message.set(this.detail(e) ?? this.translate('apply.failed'));

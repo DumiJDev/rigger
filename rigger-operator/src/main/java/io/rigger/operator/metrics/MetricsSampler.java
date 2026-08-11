@@ -110,7 +110,16 @@ public class MetricsSampler {
         }
 
         if (!batch.isEmpty()) {
-            samples.saveAll(batch);
+            try {
+                samples.saveAll(batch);
+            } catch (Exception e) {
+                // Guarded because it sits outside the per-source try blocks above: a single
+                // contended write would otherwise discard a whole round of samples that were all
+                // collected successfully, and take the exception out to the scheduler. One lost
+                // round is a gap in a chart; losing the round silently, or letting it look like a
+                // collection failure, is worse.
+                log.warn("Could not persist {} metric samples this round: {}", batch.size(), e.getMessage());
+            }
         }
     }
 

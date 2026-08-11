@@ -36,6 +36,15 @@ public class StoreAutoConfiguration {
         config.setDateClass("TEXT");
         config.setDateStringFormat("yyyy-MM-dd HH:mm:ss.SSS");
 
+        // Wait for a held write lock instead of failing immediately. SQLite allows one writer at a
+        // time, and without this a concurrent write throws SQLITE_BUSY straight away
+        // (CannotAcquireLockException). That was unreachable while the scheduler had a single thread
+        // and every job took its turn; raising `spring.task.scheduling.pool.size` so the jobs stop
+        // delaying each other is precisely what made it reachable, and it was observed once on an
+        // insert into metric_samples while the reconciliation loop was writing. Five seconds is far
+        // longer than any write here takes, so it costs nothing in the normal case.
+        config.setBusyTimeout(5000);
+
         var ds = new SQLiteDataSource(config);
         ds.setUrl("jdbc:sqlite:" + props.getPath());
         // WAL mode: allows concurrent reads while a write is in progress

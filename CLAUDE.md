@@ -40,6 +40,46 @@ for Spring MVC's implicit `@PathVariable`/`@RequestParam` name binding (e.g.
 any endpoint relying on implicit parameter names throws at request time, not at compile time —
 easy to miss until you actually call that specific endpoint.
 
+### Scheduling and thread budget
+
+Five `@Scheduled` methods share one Spring pool: `ReconciliationLoop.reconcile` (15s),
+`HpaController.reconcile` (30s), `MetricsSampler.sample` (30s), `MetricsSampler.prune` (1h),
+`GitOpsAgent.poll` (60s). Boot's default pool size is **1**, so `application.yaml` sets
+`spring.task.scheduling.pool.size` (default 5, `RIGGER_SCHEDULER_POOL_SIZE`) — one thread per
+method, so none can delay another.
+
+Not cosmetic. HPA and metrics ticks block on one Docker `statsCmd` per running container (~2s each,
+measured), so with 4 Deployments × 2 replicas the reconcile loop was observed running every 24–26s
+against its configured 15s, purely from queueing. Forced A/B on the same jar at a 10s interval:
+pool=1 → mean 17.35s, 19 of 20 ticks late; pool=5 → mean 10.54s, 0 of 15 late. Thread dumps confirm
+two scheduler threads blocked in Docker I/O simultaneously, which one thread cannot do.
+**If you add a `@Scheduled` method, raise the pool size with it.**
+
+Raising the pool made a latent SQLite problem reachable: one writer at a time means a concurrent
+write fails immediately with `SQLITE_BUSY`, which never happened while the jobs took turns.
+`StoreAutoConfiguration` now sets `busyTimeout(5000)`, and `MetricsSampler`'s `saveAll` is guarded so
+a contended write costs one round rather than the whole method.
+
+`spring.threads.virtual.enabled` is deliberately **not** set: it swaps the pool for a
+`SimpleAsyncTaskScheduler`, making the size setting silently inert, and on JDK 21–23 a virtual thread
+blocking inside `synchronized` pins its carrier — which both sqlite-jdbc and docker-java's HttpClient
+do. Concurrency where it matters is already explicit via `newVirtualThreadPerTaskExecutor()`.
+
+### Container image
+
+`docker build -t rigger:local .` at the repo root. Multi-stage on purpose: the build stage runs the
+full Maven build including the console and then **asserts** `BOOT-INF/classes/static/ui/index.html`
+is in the jar, so a fresh clone cannot produce a UI-less image the way copying `target/*.jar` could.
+It uses `-Dmaven.test.skip=true`, not `-DskipTests` — the latter still compiles test sources, so a
+checkout with a broken test would fail an image build that uses nothing from them.
+
+Runtime is `eclipse-temurin:21-jre-jammy` (glibc, because sqlite-jdbc loads a bundled native
+library), non-root uid/gid 10001, `/var/lib/rigger` as a volume with `RIGGER_DB_PATH` pointing into
+it, and `-XX:MaxRAMPercentage=70` rather than a fixed `-Xmx`: under `--memory 1g` the JVM chose a
+718 MiB heap where the same JVM on a 7.4 GB host chose 1.85 GB. Reaching Swarm needs
+`-v /var/run/docker.sock:/var/run/docker.sock --group-add "$(stat -c %g /var/run/docker.sock)"`,
+since the process is non-root. Not covered by CI yet — built and run by hand.
+
 ### Full build
 
 ```bash
@@ -181,6 +221,23 @@ provisioning (`cluster up`/`sync` are never exercised), and HPA scaling under lo
   means re-login rather than a silent renewal. The console reads `GET /auth/permissions` to decide
   which actions to offer instead of hard-coding a copy of the RBAC table.
 
+- **`RiggerApplication` carries `@ComponentScan(basePackages = "io.rigger")`, which overrides every
+  module's own bean registration.** Any `@Component` anywhere under `io.rigger` is registered by the
+  application's own scan, so a `@ConditionalOnProperty` or an exclude filter in that module's
+  `@AutoConfiguration` **cannot** suppress it. Found the hard way wiring `rigger.operator.enabled`:
+  the idiomatic conditional-import version compiled, started, and did nothing — the loops still
+  ticked five times in 60 seconds with the flag off. `OperatorAutoConfiguration` therefore removes
+  the three loop bean definitions in a `BeanFactoryPostProcessor`, which is the only mechanism a
+  single module can rely on while that blanket scan exists. Narrow the scan and this can go back to
+  `@ConditionalOnProperty` on the three classes.
+- **`rigger.operator.enabled=false` stops reconciliation, HPA and metrics sampling only.** The REST
+  API, console, live metrics endpoints and GitOps keep working. `@EnableScheduling` stays
+  unconditional on purpose: gating it would also stop `GitOpsAgent.poll`, which is registered
+  unconditionally so GitOps can be switched on from the console without a restart. Verified: 0
+  reconcile ticks and 0 new `metric_samples` rows over 70s, with the API and `/ui/` still serving.
+  This property previously existed and had **no callers at all** — a flag that silently does nothing
+  is worse than no flag.
+
 ## Security model (current state)
 
 - **Passwords**: BCrypt (`PasswordEncoder` bean in `SecurityAutoConfiguration`, injected into
@@ -258,6 +315,17 @@ Remaining gaps are feature-completion and polish:
   on. So a manifest can pass schema validation and then fail to parse. This is what made the README
   example wrong for months. Someone has to decide which side moves; until then the flat form is the
   one that works.
+- `/actuator/prometheus` is real now — `micrometer-registry-prometheus` was missing from every pom
+  while `application.yaml` advertised the endpoint, so it 404'd. Cost measured: +2.1 MB in the jar,
+  +7.7 MiB RSS, ~230 series / 41.7 KB in 53 ms per scrape. It is **authenticated**
+  (`SecurityAutoConfiguration` permits only `/actuator/health`), so a Prometheus server cannot
+  actually scrape it: JWTs last 15 minutes and there is no refresh endpoint. Making it scrapeable
+  means a scraper-specific credential or a separate unpublished management port — not widening the
+  filter chain. Until then it is a debugging endpoint you reach with an admin token.
+- **A server booting against an empty store deletes every rigger-managed Swarm service** — 9 in one
+  observed run. Correct orphan reconciliation, hazardous as a first-boot default; deserves a guard or
+  at least a loud warning. Related to the two-servers-on-one-Swarm hazard above, and the same root
+  cause: orphan detection is cluster-wide and database-relative.
 - `DELETE` can return a generic 500 on `SQLITE_BUSY` (`CannotAcquireLockException`) when
   reconciliation is writing at the same moment. It succeeds on retry. Deserves a retry or a 409
   rather than reading as a server fault.
@@ -309,6 +377,32 @@ Remaining gaps are feature-completion and polish:
   `WorkloadController.apply()`, so the CLI and console both get it without knowing the format.
   Converted manifests carry no source YAML, so JSON-Schema validation is skipped for them — the
   converter builds domain records directly and their constructors do the validating.
+- **The converter reports what it cannot carry across, and refuses the losses that matter.** It used
+  to read only `image`, `deploy.replicas`, `environment` (map form only) and `ports` (short form
+  only), and drop everything else in silence — including `volumes`, `command`, `healthcheck`,
+  `networks` and `labels`. Worse, `configs.*.file` produced a ConfigMap whose value was the
+  *filename*, `environment` in list form yielded zero variables, and a long-form `ports` entry threw
+  and vanished. Every field is now either converted or named in a structured report, with a severity
+  rule that is the whole design:
+  - **ERROR** — the workload would run but would not be the workload described (no image, no data,
+    no config, the wrong process, or a value only the user's filesystem holds). These **block the
+    apply with a 422** listing every offending path; `?force=true` is the single explicit override.
+  - **WARNING** — same workload, less supervision or topology (healthcheck, placement, labels).
+  - **INFO** — translated rather than literal (a published host port becoming a LoadBalancer).
+  Blocking is the point: a warning nobody reads is exactly why `volumes:` was being dropped.
+- **Seeing a conversion** — `POST /api/v1/namespaces/{ns}/convert` returns the generated YAML plus
+  the report and persists nothing; `riggerctl convert -f docker-compose.yml > out.yaml` puts YAML on
+  stdout and the report on stderr, exiting non-zero when blocked, so the redirect stays clean. The
+  endpoint authorizes `get`/`Deployment`, deliberately **not** `apply`: converting is a pure function
+  of the caller's own input, so a VIEWER must be able to review what a Compose file would become.
+  `ApplyCommand` has no `--force` flag, so the CLI route for an intentionally lossy apply is
+  convert-then-apply-the-YAML.
+- Compose sizes are not Kubernetes sizes: `128M` is not `128Mi`, and docker-java's
+  `MemoryUnit.toBytes` cannot parse the Compose spelling. Passing one through produced a manifest
+  that applied and validated cleanly and then threw inside `ServiceAdapter.create` on **every**
+  reconciliation cycle, so the Deployment never appeared in Swarm and the only symptom was a
+  repeating "Failed to create service". The converter now normalises the units it understands and
+  drops the rest with a warning.
 - **Dry run must not persist.** `apply(dryRun=true)` stops after parse, RBAC and schema validation
   and reports each resource as `validated`. This was broken originally: `dryRun` only suppressed the
   audit payload while still saving, so a "validation" really applied and then reconciled onto Swarm.

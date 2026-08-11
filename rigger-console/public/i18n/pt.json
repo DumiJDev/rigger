@@ -5,6 +5,18 @@
   },
   "apply": {
     "applied": "{{count}} recurso(s) aplicado(s)",
+    "compose": {
+      "applyConverted": "Aplicar YAML convertido",
+      "blocked": "A aplicação do ficheiro compose é recusada enquanto estes erros se mantiverem: a carga arrancaria, mas não seria a carga descrita. Corrige o compose, ou edita o YAML abaixo e aplica esse.",
+      "convert": "Converter",
+      "detected": "Isto parece um ficheiro docker-compose. Converte-o primeiro para ver o que o Rigger consegue e não consegue expressar.",
+      "issuesTitle": "Relatório da conversão",
+      "noIssues": "Nada se perdeu na conversão.",
+      "path": "Caminho no compose",
+      "previewTitle": "YAML rigger.io/v1 gerado",
+      "reviewFirst": "Revê a conversão abaixo e depois aplica.",
+      "severity": "Gravidade"
+    },
     "dryRun": "Validar sem aplicar",
     "empty": "Escreva ou cole um manifesto primeiro",
     "failed": "Não foi possível aplicar o manifesto",
