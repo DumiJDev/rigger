@@ -30,7 +30,9 @@ public class AuditController {
 
         var ctx = (RiggerContext) req.getAttribute("riggerContext");
         if (ctx == null) return ResponseEntity.status(401).build();
-        rbac.authorize(ctx, "get", "AuditLog");
+        // "Audit" is the spelling RbacPolicyEngine.ADMIN_ONLY declares; the resource string is
+        // matched literally, so "AuditLog" here made can('get','Audit') a claim nothing enforced.
+        rbac.authorize(ctx, "get", "Audit");
 
         var pageable = PageRequest.of(page, Math.min(size, 200), Sort.by("timestamp").descending());
         var entries  = namespace != null

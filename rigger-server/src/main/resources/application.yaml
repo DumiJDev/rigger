@@ -19,6 +19,25 @@ spring:
       - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
   application:
     name: rigger
+  task:
+    scheduling:
+      # Spring Boot's default is ONE thread for every @Scheduled method in the application, and
+      # Rigger has five of them (reconcile 15s, HPA 30s, metrics sample 30s, metrics prune 1h,
+      # GitOps poll 60s). Several block for seconds on the Docker Engine — one `statsCmd` per
+      # running container, ~1.2s each measured — so on a single thread they queue behind each other
+      # and every configured interval becomes a lie: with 4 Deployments x 2 replicas the reconcile
+      # loop was observed running every 24-26s against its configured 15s, because it waited for
+      # the HPA and sampler ticks ahead of it. One thread per scheduled method means none of them
+      # can ever delay another.
+      pool:
+        size: ${RIGGER_SCHEDULER_POOL_SIZE:5}
+    # NOT setting spring.threads.virtual.enabled, deliberately. It would replace the pool above
+    # with a SimpleAsyncTaskScheduler, making the size setting silently inert, and this project
+    # supports any JDK 21+: on 21-23 a virtual thread that blocks inside a `synchronized` block
+    # pins its carrier, and both hot paths here do exactly that (the SQLite JDBC driver and
+    # docker-java's Apache HttpClient are heavily synchronized). The blocking work that actually
+    # needed concurrency already gets it explicitly — ReconciliationLoop, MetricsSampler and
+    # DockerStatsMetricsSource each fan out over Executors.newVirtualThreadPerTaskExecutor().
   jpa:
     database-platform: org.hibernate.community.dialect.SQLiteDialect
     hibernate:
@@ -35,6 +54,19 @@ management:
   endpoints:
     web:
       exposure:
+        # `prometheus` was listed here long before anything could serve it: micrometer-registry-prometheus
+        # was in no pom, so the endpoint bean was never created and /actuator/prometheus 404'd while the
+        # config advertised it. The dependency is now in rigger-server's pom (+2.1 MB in the jar,
+        # +7.7 MiB RSS measured in a 1 GiB container) and the endpoint returns ~230 series / 41.7 KB in
+        # 53 ms.
+        #
+        # It is authenticated, and deliberately so for now: SecurityAutoConfiguration permits only
+        # /actuator/health, so a scrape needs a bearer token. That means a real Prometheus cannot poll it
+        # yet — JWTs last 15 minutes and there is no refresh endpoint. Making it scrapeable is a
+        # follow-up decision for rigger-security, not something to solve by widening the filter chain
+        # blindly: the right shape is either a scraper-specific credential or moving the actuators to a
+        # separate management port that is not published. Until then this is a debugging endpoint you
+        # curl with an admin token, not a metrics feed.
         include: health,prometheus
   endpoint:
     health:
@@ -65,7 +97,24 @@ rigger:
   operator:
     reconcile-interval-seconds: ${RIGGER_RECONCILE_INTERVAL:15}
     hpa-interval-seconds:       ${RIGGER_HPA_INTERVAL:30}
+    # false leaves the REST API, the console and GitOps fully working but stops the three
+    # background loops (reconcile, HPA, metrics sampling) — nothing is written to Swarm and no
+    # metric history accumulates. See OperatorAutoConfiguration: the loop beans are simply not
+    # registered. GitOps polling is intentionally NOT gated by this, so it can still be turned on
+    # from the console at runtime.
     enabled:                    ${RIGGER_OPERATOR_ENABLED:true}
+    metrics:
+      # These four were code-only defaults with no entry here, which hid the one knob that decides
+      # how fast metric_samples grows. Volume is the product of interval and retention and nothing
+      # warns you: at 30s/24h, 9 cluster rows + 3 per Deployment per round is ~200k rows a day at
+      # 20 Deployments (measured: 270 rows in 4 minutes with 4 Deployments, ~97k rows/day). Raising
+      # retention to a week while sampling every 5s is 8M rows.
+      sample-interval-seconds: ${RIGGER_METRICS_SAMPLE_INTERVAL:30}
+      retention-hours:         ${RIGGER_METRICS_RETENTION_HOURS:24}
+      prune-interval-seconds:  ${RIGGER_METRICS_PRUNE_INTERVAL:3600}
+      # The activity feed is what someone reads after an incident; a week-old CPU sample has no
+      # audience. audit_log is deliberately never pruned — it is a security record.
+      event-retention-days:    ${RIGGER_EVENT_RETENTION_DAYS:14}
 
   # Set this to true to connect to an EXISTING Swarm
   # instead of using the provisioner to create one.

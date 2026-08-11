@@ -196,6 +196,27 @@ export interface GitOpsConfig {
 export interface ApplyResult {
   applied: number;
   resources: Array<{ kind: string; name: string; namespace: string; action: string }>;
+  /** Present only for docker-compose input, and only when the conversion lost something. */
+  composeIssues?: ComposeIssue[];
+}
+
+/**
+ * One thing the docker-compose converter could not carry across, with the Compose path it came
+ * from. ERROR means applying the Compose file is refused (the workload would be wrong, not just
+ * less supervised); WARNING and INFO are advisory.
+ */
+export interface ComposeIssue {
+  severity: 'ERROR' | 'WARNING' | 'INFO';
+  path: string;
+  message: string;
+}
+
+/** Response of POST /namespaces/{ns}/convert. Nothing is persisted by that call. */
+export interface ConvertResult {
+  yaml: string;
+  resources: Array<{ kind: string; name: string; namespace: string }>;
+  issues: ComposeIssue[];
+  blocked: boolean;
 }
 
 /** Spring Data's page envelope. */

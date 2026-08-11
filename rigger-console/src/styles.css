@@ -184,9 +184,19 @@
     color: var(--text-muted);
   }
 
+  /* Wide tables scroll instead of breaking the page.
+     Careful: `overflow` cannot be visible on one axis while the other is clipped, so declaring only
+     `overflow-x` makes the vertical axis `auto` too and turns this into a scroll container in both
+     directions. Anything absolutely positioned inside is therefore clipped to this box — which is
+     why the row kebab is positioned `fixed` (see RowMenu) rather than absolutely. */
   .table-wrap {
     width: 100%;
     overflow-x: auto;
+  }
+  /* Whole-row hit target for opening a resource's details. The cursor is the only affordance a table
+     row can carry — it has no border or background of its own to change. */
+  table.data tbody tr.clickable {
+    cursor: pointer;
   }
   table.data {
     width: 100%;
@@ -362,6 +372,70 @@
     border: 1px solid var(--border-subtle);
     color: var(--text-muted);
     white-space: nowrap;
+  }
+
+  /* Tab strip inside a drawer. The active tab is marked by a rule on its lower edge rather than a
+     filled pill: at this size a filled chip reads as a button that does something, not as the view
+     you are already looking at. The strip sits on the panel's own bottom border, so the active
+     marker overlaps it by a pixel and reads as one line. */
+  .tabs {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: -1px;
+  }
+  .tab {
+    padding: 0.5rem 0.125rem;
+    font-size: var(--text-xs);
+    font-weight: 500;
+    color: var(--text-muted);
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+  }
+  .tab:hover {
+    color: var(--text-primary);
+  }
+  .tab-active {
+    color: var(--color-brand-700);
+    border-bottom-color: var(--color-brand-600);
+  }
+  .dark .tab-active {
+    color: var(--color-brand-300);
+    border-bottom-color: var(--color-brand-400);
+  }
+
+  /* Read-only block of code — a YAML spec today. Sunken so it reads as data rather than as an
+     editor, and it scrolls on both axes so a long line neither wraps (which would misrepresent the
+     indentation that carries YAML's meaning) nor widens the drawer. */
+  .code-block {
+    margin: 0;
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border-subtle);
+    background-color: var(--surface-sunken);
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    overflow: auto;
+    tab-size: 2;
+  }
+
+  /* Key/value rows for a details panel. A grid rather than a table so the value column wraps while
+     the labels stay aligned in one narrow column. */
+  .kv {
+    display: grid;
+    grid-template-columns: minmax(6rem, max-content) 1fr;
+    gap: 0.375rem 1rem;
+    margin: 0;
+  }
+  .kv dt {
+    color: var(--text-muted);
+  }
+  .kv dd {
+    margin: 0;
+    min-width: 0;
   }
 
   /* Icon-only control, sized to the compact row height so it never stretches a table row. */

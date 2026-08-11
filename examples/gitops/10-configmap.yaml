@@ -1,0 +1,18 @@
+# ConfigMap — non-sensitive configuration for the shopfront app.
+#
+# Reconciled into a Docker Config named rigger__demo__shopfront-config__<hash>.
+# Configs are immutable in Swarm, so changing a value here creates a NEW version and
+# the referencing Deployment picks it up on its next reconciliation cycle.
+apiVersion: rigger.io/v1
+kind: ConfigMap
+metadata:
+  name: shopfront-config
+  namespace: demo
+  labels:
+    app: shopfront
+    part-of: shopfront
+spec:
+  data:
+    APP_ENV: "demo"
+    APP_LOG_LEVEL: "info"
+    api.url: "http://shopfront-api.demo:8080"

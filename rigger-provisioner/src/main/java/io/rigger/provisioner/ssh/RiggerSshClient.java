@@ -115,10 +115,26 @@ public class RiggerSshClient {
         }
     }
 
-    private Path expandPath(String path) {
-        if (path.startsWith("~/")) {
-            return Paths.get(System.getProperty("user.home"), path.substring(2));
+    /**
+     * Expands a user-supplied key path. Beyond the Unix {@code ~/} form this also accepts the
+     * two spellings a Windows user will actually type — {@code ~\} and {@code %USERPROFILE%} —
+     * since Java performs no shell expansion of its own and the path would otherwise be taken
+     * literally and reported as "key not found".
+     */
+    static Path expandPath(String path) {
+        String p = path.trim();
+        if (p.regionMatches(true, 0, "%USERPROFILE%", 0, 13)) return underHome(p.substring(13));
+        if (p.equals("~"))                                    return underHome("");
+        if (p.startsWith("~/") || p.startsWith("~\\"))         return underHome(p.substring(1));
+        return Paths.get(p);
+    }
+
+    /** Resolves a home-relative remainder, accepting either separator so Windows input works. */
+    private static Path underHome(String rest) {
+        Path base = Paths.get(System.getProperty("user.home"));
+        for (String segment : rest.split("[/\\\\]")) {
+            if (!segment.isEmpty()) base = base.resolve(segment);
         }
-        return Paths.get(path);
+        return base;
     }
 }

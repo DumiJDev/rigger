@@ -1,0 +1,18 @@
+# The smallest Deployment that applies cleanly — used by the quick start in README.md.
+#
+#   riggerctl apply -f examples/deployment-sample.yaml -n default --insecure
+#
+# For the full multi-resource app (ConfigMap, Secret, autoscaling, both Service types),
+# see examples/gitops/.
+apiVersion: rigger.io/v1
+kind: Deployment
+metadata:
+  name: hello-web
+  namespace: default
+  labels:
+    app: hello-web
+spec:
+  replicas: 1
+  selector:
+    app: hello-web
+  image: nginx:alpine

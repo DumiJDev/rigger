@@ -2,7 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
-  ApplyResult, AuditResponse, ClusterMetrics, ClusterStatus, DeploymentMetricName,
+  ApplyResult, AuditResponse, ClusterMetrics, ClusterStatus, ConvertResult, DeploymentMetricName,
   DeploymentMetrics, EventResponse, GitOpsConfig, GitOpsState, MetricName, MetricSeries,
   NodeResponse, Page, PodResponse, ResourceResponse, Topology, UserResponse,
 } from './api.models';
@@ -48,6 +48,15 @@ export class ApiService {
 
   apply(namespace: string, manifest: string, dryRun = false): Observable<ApplyResult> {
     return this.http.post<ApplyResult>(`${this.ns(namespace)}/apply`, { manifest, dryRun });
+  }
+
+  /**
+   * Translates docker-compose input to rigger.io/v1 YAML and reports what it could not carry across.
+   * Persists nothing — it exists so the conversion can be reviewed before it is applied, which
+   * previously happened invisibly inside apply().
+   */
+  convert(namespace: string, content: string): Observable<ConvertResult> {
+    return this.http.post<ConvertResult>(`${this.ns(namespace)}/convert`, { content });
   }
   scale(namespace: string, name: string, replicas: number): Observable<unknown> {
     return this.http.post(`${this.ns(namespace)}/deployments/${name}/scale`, { replicas });

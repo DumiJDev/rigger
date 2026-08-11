@@ -5,6 +5,7 @@ import { AuthService } from '../../core/auth.service';
 import { ResourceResponse } from '../../core/api.models';
 import { NamespaceService } from '../../core/namespace.service';
 import { RefreshService } from '../../core/refresh.service';
+import { RowAction } from '../../shared/row-menu';
 
 export type SortDir = 'asc' | 'desc';
 
@@ -31,6 +32,31 @@ export abstract class ResourceListPage {
   readonly query = signal('');
   readonly sortKey = signal('name');
   readonly sortDir = signal<SortDir>('asc');
+
+  /** The row whose detail drawer is open, or null. */
+  readonly viewing = signal<ResourceResponse | null>(null);
+
+  /**
+   * Opens the detail drawer for a row.
+   *
+   * <p>Lives here rather than in each page for the same reason search and sort do: the drawer reads
+   * only fields every kind has, so wiring it once gave all four pages details at the same time.
+   * Bound both to the row itself and to a kebab entry — a row that shows a panel on click is the
+   * expectation, and the explicit action is what makes that discoverable.
+   */
+  openDetails(item: ResourceResponse): void {
+    this.viewing.set(item);
+  }
+
+  /**
+   * Kebab entry every kind offers, first in the list. Shared so the four menus can't drift in label,
+   * icon or position — the one thing a per-page copy always gets wrong eventually.
+   */
+  protected readonly detailsAction: RowAction = {
+    id: 'details',
+    labelKey: 'details.view',
+    icon: 'file-code',
+  };
 
   /**
    * What the table renders: the loaded rows, filtered and sorted.
@@ -135,6 +161,8 @@ export abstract class ResourceListPage {
       // Drop it locally rather than refetching: reconciliation is asynchronous, so an immediate
       // refetch can still return the row and make the delete look like it failed.
       this.items.update((list) => list.filter((i) => i.name !== name));
+      // A drawer left open over a resource that no longer exists shows a spec nothing can act on.
+      if (this.viewing()?.name === name) this.viewing.set(null);
     } catch (e) {
       const err = e as { status?: number };
       this.error.set(err?.status === 403 ? 'errors.forbidden' : 'common.error');

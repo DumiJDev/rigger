@@ -40,7 +40,7 @@
         </thead>
         <tbody>
           @for (item of visible(); track item.name) {
-            <tr>
+            <tr class="clickable" (click)="openDetails(item)">
               <td class="font-medium">{{ item.name }}</td>
               <td class="muted">{{ image(item) }}</td>
               <td class="num">{{ replicas(item) }}</td>
@@ -116,5 +116,8 @@
         </div>
       </div>
     </div>
+  }
+  @if (viewing(); as item) {
+    <r-detail-drawer [resource]="item" (closed)="viewing.set(null)" />
   }
 </ng-container>

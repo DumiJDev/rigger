@@ -136,8 +136,7 @@ public class RiggerApiClient {
     }
 
     private void tryLoadCaCert(OkHttpClient.Builder builder, String caCertPath) {
-        var caFile = Path.of(caCertPath.startsWith("~/")
-            ? System.getProperty("user.home") + caCertPath.substring(1) : caCertPath);
+        var caFile = io.rigger.cli.config.CliConfig.expandPath(caCertPath);
         if (!Files.exists(caFile)) return;
         try (var is = Files.newInputStream(caFile)) {
             var cf  = java.security.cert.CertificateFactory.getInstance("X.509");

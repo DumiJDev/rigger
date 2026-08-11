@@ -1,0 +1,23 @@
+# Keep the build context small and reproducible. Without this, `docker build .` ships the host's
+# build output into the daemon — target/ alone is a ~100 MB fat jar per build, and
+# rigger-console/node is a platform-specific Node toolchain the pom installs there deliberately
+# (see rigger-server/pom.xml). Both would also let a stale host artifact influence the image.
+target/
+*/target/
+rigger-console/node/
+rigger-console/node_modules/
+rigger-console/dist/
+rigger-console/.angular/
+
+# Local state that must never be baked into an image: the SQLite database holds identities,
+# secrets (encrypted) and the audit log.
+*.db
+*.db-wal
+*.db-shm
+
+.git/
+.github/
+.idea/
+.vscode/
+e2e/node_modules/
+**/*.log

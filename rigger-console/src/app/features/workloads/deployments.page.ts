@@ -6,13 +6,14 @@ import { ResourceResponse } from '../../core/api.models';
 import { DataState } from '../../shared/data-state';
 import { ListToolbar } from '../../shared/list-toolbar';
 import { PageHeader } from '../../shared/page-header';
+import { DetailDrawer } from '../../shared/detail-drawer';
 import { RowAction, RowMenu } from '../../shared/row-menu';
 import { ResourceListPage } from './resource-page.base';
 
 @Component({
   selector: 'r-deployments',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoDirective, PageHeader, DataState, FormsModule, ListToolbar, RowMenu],
+  imports: [TranslocoDirective, PageHeader, DataState, FormsModule, ListToolbar, RowMenu, DetailDrawer],
   templateUrl: './deployments.page.html',
 })
 export class DeploymentsPage extends ResourceListPage {
@@ -50,7 +51,7 @@ export class DeploymentsPage extends ResourceListPage {
 
   /** Built per row because the actions depend on the caller's permissions, which the base knows. */
   actionsFor(item: ResourceResponse): RowAction[] {
-    const actions: RowAction[] = [];
+    const actions: RowAction[] = [this.detailsAction];
     if (this.auth.can('scale', 'Deployment')) {
       actions.push({ id: 'scale', labelKey: 'deployments.scale', icon: 'scale' });
     }
@@ -61,6 +62,7 @@ export class DeploymentsPage extends ResourceListPage {
   }
 
   onAction(id: string, item: ResourceResponse): void {
+    if (id === 'details') this.openDetails(item);
     if (id === 'scale') this.openScale(item);
     if (id === 'delete') this.confirming.set(item.name);
   }

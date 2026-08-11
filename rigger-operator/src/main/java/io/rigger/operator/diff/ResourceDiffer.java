@@ -89,11 +89,11 @@ public class ResourceDiffer {
         return new ReconcilePlan(toCreate, toUpdate, toDelete, unchanged);
     }
 
-    /** Convenience overload — infers DeploymentSpec as specClass, hashes on the spec object alone. */
-    public ReconcilePlan diff(List<ResourceEntity> desired, List<Service> actual) {
-        return diff(desired, actual, io.rigger.core.domain.resource.DeploymentSpec.class,
-            (meta, spec) -> Integer.toHexString(spec.hashCode()));
-    }
+    // There is deliberately no convenience `diff(desired, actual)` overload. It used to exist,
+    // unused, hashing with a plain `spec.hashCode()` — a second, divergent hash function sitting
+    // there waiting for someone to call it. That exact class of mistake (two hash functions that can
+    // never agree) already cost this project an endless Deployment update loop; `hashFn` must always
+    // come from the caller that will do the writing.
 
     private <T> boolean needsUpdate(ObjectMeta meta, T spec, Service service, BiFunction<ObjectMeta, T, String> hashFn) {
         var labels = service.getSpec() != null ? service.getSpec().getLabels() : null;
