@@ -21,9 +21,13 @@
         <r-icon name="sidebar" [size]="16" />
       </button>
 
-      <a routerLink="/dashboard" class="flex items-center gap-2 no-underline" style="color: inherit">
-        <img src="brand/mark-knot-on-dark.svg" alt="" width="20" height="20" class="brand-mark" />
-        <span class="text-sm font-semibold tracking-tight">{{ t('app.name') }}</span>
+      <!-- The lockup replaces a mark plus a text span: the wordmark's letterforms are part of the
+           mark and are drawn as paths, so they render identically everywhere instead of following
+           whatever font the machine happens to have. "Rigger" is a proper noun and is not
+           translated, so nothing is lost by it not being live text — but it still needs a real alt,
+           because this is the link back to the dashboard. -->
+      <a routerLink="/dashboard" class="flex items-center no-underline" style="color: inherit">
+        <img src="brand/lockup-on-dark.svg" alt="Rigger" class="brand-mark h-5 w-auto" />
       </a>
 
       <span class="mx-1 h-5 w-px" style="background-color: var(--masthead-border)"></span>

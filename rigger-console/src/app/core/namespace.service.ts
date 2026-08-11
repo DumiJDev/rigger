@@ -41,10 +41,14 @@ export class NamespaceService {
       const list = await firstValueFrom(this.http.get<string[]>('/api/v1/namespaces'));
       this._available.set(list);
 
+      // An empty list is NOT an error, however tempting it is to treat it as one. The server derives
+      // this list from the resources that exist, so a cluster where nothing has been applied yet
+      // legitimately returns []. Reporting that as a failure put a permanent "something went wrong"
+      // in the masthead of every fresh install — a false alarm is worse than the silence it replaced,
+      // because it trains the operator to ignore the one place real errors appear. Keeping the current
+      // selection is right too: it is where an apply will land.
       if (!list.length) {
-        // An empty list means the selection we keep using cannot exist, so every workload call is
-        // aimed at nothing. Report it instead of leaving the stale value looking authoritative.
-        this._loadError.set(`No namespaces returned; still scoped to "${this.current()}"`);
+        this._loadError.set(null);
         return;
       }
 

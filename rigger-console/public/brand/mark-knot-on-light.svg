@@ -1,0 +1,22 @@
+<!--
+  Colour-explicit copy of mark-knot for <img>/favicon use on LIGHT surfaces.
+
+  #7A40DA is brand-600 (oklch(0.53 0.22 295)) converted to sRGB — the same value buttons use, so a
+  mark next to a primary button reads as one family rather than two near-misses. Deliberately darker
+  than the on-dark variant: identical violet cannot carry both, and matching the token each surface
+  already uses is what keeps them looking like one mark rather than two.
+
+  Concept D — "hitch": two lines crossing and bound, the simplest possible read of "rigged
+  together". Fewer strokes than the rigging concept so it holds up small, and it isn't a letter, so
+  it doesn't fall back to being a generic monogram.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-label="Rigger">
+  <!-- the standing part, running corner to corner under tension -->
+  <path d="M5 26 C5 14, 27 18, 27 6"
+        stroke="#7A40DA" stroke-width="3.2" stroke-linecap="round"/>
+  <!-- the turn taken around it -->
+  <path d="M27 26 C27 14, 5 18, 5 6"
+        stroke="#7A40DA" stroke-width="3.2" stroke-linecap="round"/>
+  <!-- the bight where they bind -->
+  <circle cx="16" cy="17.2" r="3.4" fill="#7A40DA"/>
+</svg>
