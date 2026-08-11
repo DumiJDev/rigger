@@ -1,194 +1,208 @@
 <ng-container *transloco="let t">
-  <div class="flex min-h-screen">
-    <!-- Sidebar -->
-    <aside
-      class="sticky top-0 hidden h-screen shrink-0 flex-col border-r transition-[width] duration-200 md:flex"
-      [class.w-60]="sidebarOpen()"
-      [class.w-16]="!sidebarOpen()"
-      style="border-color: var(--border-subtle); background-color: var(--surface-raised)"
+  <div class="flex min-h-screen flex-col">
+    <!-- Masthead. Dark in both themes on purpose: it anchors the page and separates chrome from
+         content, so it should not flip with the theme. -->
+    <header
+      class="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b px-3"
+      style="
+        background-color: var(--surface-masthead);
+        border-color: var(--masthead-border);
+        color: var(--masthead-text);
+      "
     >
-      <div class="flex h-14 items-center gap-2.5 px-4">
-        <span
-          class="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-sm font-bold text-white"
-          style="background-color: var(--color-brand-600)"
-          aria-hidden="true"
-          >R</span
-        >
-        @if (sidebarOpen()) {
-          <div class="min-w-0">
-            <div class="truncate text-sm font-semibold leading-tight">{{ t('app.name') }}</div>
-            <div class="muted truncate text-[11px] leading-tight">{{ t('app.tagline') }}</div>
-          </div>
+      <button
+        type="button"
+        class="btn-icon"
+        style="color: var(--masthead-muted)"
+        [attr.aria-label]="t('nav.toggleSidebar')"
+        [attr.aria-expanded]="sidebarOpen()"
+        (click)="sidebarOpen.set(!sidebarOpen())"
+      >
+        <r-icon name="sidebar" [size]="16" />
+      </button>
+
+      <!-- The lockup replaces a mark plus a text span: the wordmark's letterforms are part of the
+           mark and are drawn as paths, so they render identically everywhere instead of following
+           whatever font the machine happens to have. "Rigger" is a proper noun and is not
+           translated, so nothing is lost by it not being live text — but it still needs a real alt,
+           because this is the link back to the dashboard. -->
+      <a routerLink="/dashboard" class="flex items-center no-underline" style="color: inherit">
+        <img src="brand/lockup-on-dark.svg" alt="Rigger" class="brand-mark h-5 w-auto" />
+      </a>
+
+      <span class="mx-1 h-5 w-px" style="background-color: var(--masthead-border)"></span>
+
+      <!-- Namespace: a picker for cluster-admins, a fixed label for scoped identities. -->
+      <label class="flex items-center gap-1.5 text-xs">
+        <span class="hidden sm:inline" style="color: var(--masthead-muted)">
+          {{ t('common.namespace') }}
+        </span>
+        @if (ns.canSwitch() && ns.available().length) {
+          <!-- [selected] per option, never [value] on the select: the host binding runs before @for
+               creates the options, so the assignment finds nothing to match, selectedIndex falls to
+               the browser's default (first option) and nothing re-applies it. The list arrives from
+               an async fetch here, which makes it certain rather than merely likely. -->
+          <select
+            class="masthead-select min-w-36"
+            (change)="onNamespaceChange($event)"
+            [attr.aria-label]="t('common.namespace')"
+          >
+            @for (n of ns.available(); track n) {
+              <option [value]="n" [selected]="n === ns.current()">{{ n }}</option>
+            }
+          </select>
+        } @else {
+          <span class="chip" style="background-color: var(--masthead-border); color: inherit; border-color: transparent">
+            {{ ns.current() }}
+          </span>
         }
+        <!-- A failed or empty namespace load leaves the chip above looking authoritative while every
+             workload call targets a namespace that may not exist; say so instead. -->
+        @if (ns.loadError()) {
+          <span class="inline-flex items-center gap-1" style="color: var(--masthead-muted)" [title]="ns.loadError()!">
+            <r-icon name="alert" [size]="13" />
+            <span class="hidden sm:inline">{{ t('common.error') }}</span>
+          </span>
+        }
+      </label>
+
+      <div class="flex-1"></div>
+
+      <!-- Auto-refresh. Off by default: every tick re-fetches, and some of those calls reach Docker. -->
+      <div class="flex items-center">
+        <button
+          type="button"
+          class="btn-icon"
+          style="color: var(--masthead-muted)"
+          [attr.aria-label]="t('refresh.now')"
+          [title]="t('refresh.now')"
+          (click)="refresh.refreshNow()"
+        >
+          <r-icon name="refresh" [size]="15" />
+        </button>
+        <!-- [selected] per option, never [value] on the select: the host binding is applied before
+             @for creates the options, so a persisted interval like 30 matched nothing, the select
+             displayed "off" while the timer kept polling — and touching the select then wrote that
+             displayed "off" back over the real value. -->
+        <select
+          class="masthead-select"
+          (change)="onIntervalChange($event)"
+          [attr.aria-label]="t('refresh.interval')"
+          [title]="t('refresh.interval')"
+        >
+          @for (s of intervals; track s) {
+            <option [value]="s" [selected]="s === refresh.interval()">{{ intervalLabel(s) }}</option>
+          }
+        </select>
       </div>
-
-      <nav class="flex-1 overflow-y-auto px-2 pb-4">
-        <a
-          routerLink="/dashboard"
-          routerLinkActive="nav-active"
-          class="nav-link"
-          [title]="t('nav.dashboard')"
-        >
-          <span class="nav-dot" aria-hidden="true"></span>
-          @if (sidebarOpen()) { <span>{{ t('nav.dashboard') }}</span> }
-        </a>
-        <a
-          routerLink="/topology"
-          routerLinkActive="nav-active"
-          class="nav-link"
-          [title]="t('nav.topology')"
-        >
-          <span class="nav-dot" aria-hidden="true"></span>
-          @if (sidebarOpen()) { <span>{{ t('nav.topology') }}</span> }
-        </a>
-
-        @if (sidebarOpen()) {
-          <div class="nav-section">{{ t('nav.workloads') }}</div>
-        } @else {
-          <div class="my-3 border-t" style="border-color: var(--border-subtle)"></div>
-        }
-        @for (item of workloadNav; track item.path) {
-          <a
-            [routerLink]="item.path"
-            routerLinkActive="nav-active"
-            class="nav-link"
-            [title]="t(item.labelKey)"
-          >
-            <span class="nav-dot" aria-hidden="true"></span>
-            @if (sidebarOpen()) { <span>{{ t(item.labelKey) }}</span> }
-          </a>
-        }
-        <a routerLink="/apply" routerLinkActive="nav-active" class="nav-link" [title]="t('nav.apply')">
-          <span class="nav-dot" aria-hidden="true"></span>
-          @if (sidebarOpen()) { <span>{{ t('nav.apply') }}</span> }
-        </a>
-
-        @if (sidebarOpen()) {
-          <div class="nav-section">{{ t('nav.cluster') }}</div>
-        } @else {
-          <div class="my-3 border-t" style="border-color: var(--border-subtle)"></div>
-        }
-        @for (item of visibleClusterNav(); track item.path) {
-          <a
-            [routerLink]="item.path"
-            routerLinkActive="nav-active"
-            class="nav-link"
-            [title]="t(item.labelKey)"
-          >
-            <span class="nav-dot" aria-hidden="true"></span>
-            @if (sidebarOpen()) { <span>{{ t(item.labelKey) }}</span> }
-          </a>
-        }
-
-        @if (visibleAdminNav().length) {
-          @if (sidebarOpen()) {
-            <div class="nav-section">{{ t('nav.administration') }}</div>
-          } @else {
-            <div class="my-3 border-t" style="border-color: var(--border-subtle)"></div>
-          }
-          @for (item of visibleAdminNav(); track item.path) {
-            <a
-              [routerLink]="item.path"
-              routerLinkActive="nav-active"
-              class="nav-link"
-              [title]="t(item.labelKey)"
-            >
-              <span class="nav-dot" aria-hidden="true"></span>
-              @if (sidebarOpen()) { <span>{{ t(item.labelKey) }}</span> }
-            </a>
-          }
-        }
-      </nav>
 
       <button
         type="button"
-        class="m-2 rounded-lg px-3 py-2 text-left text-xs muted hover:bg-[var(--surface-sunken)]"
-        (click)="sidebarOpen.set(!sidebarOpen())"
-        [attr.aria-expanded]="sidebarOpen()"
+        class="btn-icon"
+        style="color: var(--masthead-muted)"
+        [attr.aria-label]="t('density.label')"
+        [title]="t('density.' + density.mode())"
+        (click)="density.toggle()"
       >
-        {{ sidebarOpen() ? '«' : '»' }}
+        <r-icon name="rows" [size]="15" />
       </button>
-    </aside>
 
-    <!-- Main column -->
-    <div class="flex min-w-0 flex-1 flex-col">
-      <header
-        class="sticky top-0 z-10 flex h-14 items-center gap-3 border-b px-4 backdrop-blur"
-        style="border-color: var(--border-subtle); background-color: color-mix(in oklch, var(--surface-page) 85%, transparent)"
+      <button
+        type="button"
+        class="btn-icon"
+        style="color: var(--masthead-muted)"
+        [attr.aria-label]="t('theme.label')"
+        [title]="t('theme.' + theme.mode())"
+        (click)="theme.cycle()"
       >
-        <!-- Namespace: a picker for cluster-admins, a fixed label for scoped identities -->
-        <label class="flex items-center gap-2 text-sm">
-          <span class="muted hidden sm:inline">{{ t('common.namespace') }}</span>
-          @if (ns.canSwitch() && ns.available().length) {
-            <select
-              class="input w-auto min-w-40 py-1.5"
-              [value]="ns.current()"
-              (change)="onNamespaceChange($event)"
-              [attr.aria-label]="t('common.namespace')"
-            >
-              @for (n of ns.available(); track n) {
-                <option [value]="n">{{ n }}</option>
-              }
-            </select>
-          } @else {
-            <span
-              class="rounded-lg px-2.5 py-1 font-medium"
-              style="background-color: var(--surface-sunken)"
-              >{{ ns.current() }}</span
-            >
-          }
-        </label>
+        <r-icon [name]="themeIcon()" [size]="15" />
+      </button>
 
-        <div class="flex-1"></div>
-
-        <button
-          type="button"
-          class="btn btn-ghost py-1.5"
-          (click)="theme.cycle()"
-          [title]="t('theme.label')"
-        >
-          {{ t(themeLabelKey()) }}
-        </button>
-
+      <label class="flex items-center gap-1" [title]="t('language.label')">
+        <r-icon name="globe" [size]="15" style="color: var(--masthead-muted)" />
+        <!-- [selected] per option, never [value] on the select: the host binding precedes the @for
+             that creates the options, so a persisted "en" showed as "PT" while Transloco served
+             English. Bound per option it is evaluated as each option is created. -->
         <select
-          class="input w-auto py-1.5"
-          [value]="activeLang()"
+          class="masthead-select"
           (change)="setLang($any($event.target).value)"
           [attr.aria-label]="t('language.label')"
         >
           @for (l of langs; track l) {
-            <option [value]="l">{{ l.toUpperCase() }}</option>
+            <option [value]="l" [selected]="l === activeLang()">{{ l.toUpperCase() }}</option>
           }
         </select>
+      </label>
 
-        <div class="relative">
-          <button
-            type="button"
-            class="btn btn-ghost py-1.5"
-            (click)="userMenuOpen.set(!userMenuOpen())"
-            [attr.aria-expanded]="userMenuOpen()"
+      <div class="relative">
+        <button
+          type="button"
+          class="flex items-center gap-1.5 rounded px-2 py-1 text-xs"
+          style="color: inherit"
+          [attr.aria-expanded]="userMenuOpen()"
+          (click)="userMenuOpen.set(!userMenuOpen())"
+        >
+          <span
+            class="grid h-5 w-5 place-items-center rounded-full text-[10px] font-semibold"
+            style="background-color: var(--color-brand-600); color: white"
+            aria-hidden="true"
+            >{{ (auth.user()?.username ?? '?').charAt(0).toUpperCase() }}</span
           >
-            <span class="max-w-32 truncate">{{ auth.user()?.username }}</span>
-          </button>
-          @if (userMenuOpen()) {
-            <div
-              class="surface absolute right-0 top-full z-20 mt-1 w-56 p-3 shadow-lg"
-              (mouseleave)="userMenuOpen.set(false)"
-            >
-              <div class="text-sm font-medium">{{ auth.user()?.username }}</div>
-              <div class="muted mt-0.5 text-xs">
-                {{ auth.user()?.role }} ·
-                {{ auth.user()?.namespace || t('user.allNamespaces') }}
-              </div>
-              <button type="button" class="btn btn-ghost mt-3 w-full justify-center" (click)="auth.logout()">
-                {{ t('user.signOut') }}
-              </button>
+          <span class="hidden max-w-28 truncate sm:inline">{{ auth.user()?.username }}</span>
+          <r-icon name="chevron-down" [size]="13" />
+        </button>
+        @if (userMenuOpen()) {
+          <div
+            class="surface absolute right-0 top-full z-30 mt-1 w-56 p-3 shadow-lg"
+            (mouseleave)="userMenuOpen.set(false)"
+          >
+            <div class="text-sm font-medium">{{ auth.user()?.username }}</div>
+            <div class="muted mt-0.5 text-xs">
+              {{ auth.user()?.role }} · {{ auth.user()?.namespace || t('user.allNamespaces') }}
             </div>
-          }
-        </div>
-      </header>
+            <button type="button" class="btn btn-ghost mt-3 w-full justify-center" (click)="auth.logout()">
+              <r-icon name="log-out" [size]="14" />
+              {{ t('user.signOut') }}
+            </button>
+          </div>
+        }
+      </div>
+    </header>
 
-      <main class="mx-auto w-full max-w-7xl flex-1 px-4 py-6 md:px-6">
+    <div class="flex min-h-0 flex-1">
+      <!-- Sidebar -->
+      <aside
+        class="sticky top-12 hidden h-[calc(100vh-3rem)] shrink-0 flex-col border-r transition-[width] duration-150 md:flex"
+        [class.w-56]="sidebarOpen()"
+        [class.w-13]="!sidebarOpen()"
+        style="border-color: var(--border-subtle); background-color: var(--surface-raised)"
+      >
+        <nav class="flex-1 overflow-y-auto py-2">
+          @for (group of visibleGroups(); track group.labelKey ?? 'top') {
+            @if (group.labelKey && sidebarOpen()) {
+              <div class="nav-section">{{ t(group.labelKey) }}</div>
+            } @else if (group.labelKey) {
+              <div class="mx-2 my-2 border-t" style="border-color: var(--border-subtle)"></div>
+            }
+            @for (item of group.items; track item.path) {
+              <a
+                [routerLink]="item.path"
+                routerLinkActive="nav-active"
+                class="nav-link"
+                [class.justify-center]="!sidebarOpen()"
+                [title]="t(item.labelKey)"
+              >
+                <r-icon [name]="item.icon" [size]="16" />
+                @if (sidebarOpen()) {
+                  <span class="truncate">{{ t(item.labelKey) }}</span>
+                }
+              </a>
+            }
+          }
+        </nav>
+      </aside>
+
+      <main class="min-w-0 flex-1 px-4 py-4 md:px-5">
         <router-outlet />
       </main>
     </div>

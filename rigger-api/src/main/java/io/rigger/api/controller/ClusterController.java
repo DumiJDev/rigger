@@ -6,7 +6,7 @@ import io.rigger.provisioner.cluster.ClusterManifestParser;
 import io.rigger.provisioner.cluster.ClusterOrchestrator;
 import io.rigger.security.audit.AuditService;
 import io.rigger.security.rbac.RbacPolicyEngine;
-import io.rigger.store.repository.NodeRepository;
+import io.rigger.operator.metrics.NodeInventory;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -18,15 +18,15 @@ import java.util.Map;
 @RequestMapping("/api/v1/cluster")
 public class ClusterController {
 
-    private final NodeRepository        nodeRepo;
+    private final NodeInventory         nodes;
     private final RbacPolicyEngine      rbac;
     private final AuditService          audit;
     private final ClusterManifestParser manifestParser;
     private final ClusterOrchestrator   orchestrator;
 
-    public ClusterController(NodeRepository nodeRepo, RbacPolicyEngine rbac, AuditService audit,
+    public ClusterController(NodeInventory nodes, RbacPolicyEngine rbac, AuditService audit,
                               ClusterManifestParser manifestParser, ClusterOrchestrator orchestrator) {
-        this.nodeRepo = nodeRepo; this.rbac = rbac; this.audit = audit;
+        this.nodes = nodes; this.rbac = rbac; this.audit = audit;
         this.manifestParser = manifestParser; this.orchestrator = orchestrator;
     }
 
@@ -59,9 +59,11 @@ public class ClusterController {
     public ResponseEntity<List<NodeResponse>> nodes(HttpServletRequest req) {
         var ctx = ctx(req);
         rbac.authorize(ctx, "get", "Node");
-        return ResponseEntity.ok(nodeRepo.findAll().stream()
-            .map(n -> new NodeResponse(n.getName(), n.getIp(), n.getRole(), n.getStatus(),
-                n.isPrimary(), n.getSwarmNodeId(), n.getLastSeenAt()))
+        // Swarm is the source of truth here, not the cluster_nodes table — that table only holds
+        // nodes Rigger provisioned over SSH, so an attached Swarm listed none at all.
+        return ResponseEntity.ok(nodes.list().stream()
+            .map(n -> new NodeResponse(n.name(), n.ip(), n.role(), n.status(),
+                n.primary(), n.swarmNodeId(), n.lastSeenAt()))
             .toList());
     }
 
@@ -69,10 +71,10 @@ public class ClusterController {
     public ResponseEntity<Object> status(HttpServletRequest req) {
         var ctx = ctx(req);
         rbac.authorize(ctx, "get", "Cluster");
-        long active  = nodeRepo.findByStatus(io.rigger.core.domain.cluster.NodeStatus.ACTIVE).size();
-        long total   = nodeRepo.count();
+        var counts = nodes.counts();
         return ResponseEntity.ok(java.util.Map.of(
-            "activeNodes", active, "totalNodes", total, "status", active > 0 ? "healthy" : "degraded"));
+            "activeNodes", counts.active(), "totalNodes", counts.total(),
+            "status", counts.active() > 0 ? "healthy" : "degraded"));
     }
 
     private RiggerContext ctx(HttpServletRequest req) {

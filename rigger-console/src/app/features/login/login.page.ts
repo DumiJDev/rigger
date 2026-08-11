@@ -12,17 +12,13 @@ import { AuthService } from '../../core/auth.service';
     <ng-container *transloco="let t">
       <div class="grid min-h-screen place-items-center px-4">
         <div class="w-full max-w-sm">
-          <div class="mb-8 flex items-center gap-3">
-            <span
-              class="grid h-10 w-10 place-items-center rounded-xl text-base font-bold text-white"
-              style="background-color: var(--color-brand-600)"
-              aria-hidden="true"
-              >R</span
-            >
-            <div>
-              <div class="text-lg font-semibold leading-tight">{{ t('app.name') }}</div>
-              <div class="muted text-xs leading-tight">{{ t('app.tagline') }}</div>
-            </div>
+          <!-- Two images rather than one: an <img> cannot pick up the theme, and the lockup needs a
+               darker violet on white than it does on graphite. Inlining the SVG would let
+               currentColor do it, but then the wordmark paths would be duplicated in the bundle. -->
+          <div class="mb-8">
+            <img src="brand/lockup-on-light.svg" alt="Rigger" class="h-9 w-auto dark:hidden" />
+            <img src="brand/lockup-on-dark.svg" alt="Rigger" class="hidden h-9 w-auto dark:block" />
+            <p class="muted mt-2 text-xs leading-tight">{{ t('app.tagline') }}</p>
           </div>
 
           <div class="surface p-6">

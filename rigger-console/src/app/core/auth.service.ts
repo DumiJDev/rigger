@@ -21,10 +21,17 @@ export class AuthService {
 
   private readonly _user = signal<UserResponse | null>(readStoredUser());
   private readonly _permissions = signal<Record<string, string[]>>({});
+  private readonly _permissionsFailed = signal(false);
   private restored = false;
   private restoreInFlight: Promise<boolean> | null = null;
 
   readonly user = this._user.asReadonly();
+  /**
+   * True when the last permissions fetch failed. An empty matrix and a failed fetch both make
+   * {@link can} return false for everything, so without this flag a broken endpoint looks exactly
+   * like an account with no rights — every action button vanishes and nothing says why.
+   */
+  readonly permissionsFailed = this._permissionsFailed.asReadonly();
   readonly isAuthenticated = computed(() => this._user() !== null && this.token !== null);
   readonly role = computed<RiggerRole | null>(() => this._user()?.role ?? null);
   readonly isClusterAdmin = computed(() => this.role() === 'CLUSTER_ADMIN');
@@ -90,9 +97,13 @@ export class AuthService {
         this.http.get<PermissionsResponse>('/api/v1/auth/permissions'),
       );
       this._permissions.set(res.permissions ?? {});
-    } catch {
-      // Without the matrix the console just shows fewer affordances; the server still enforces.
+      this._permissionsFailed.set(false);
+    } catch (e) {
+      // Server still enforces, so this is not a security hole — but it silently strips the UI of
+      // every action, so it has to be reported rather than swallowed.
+      console.error('[rigger] could not load the permission matrix; actions will be hidden', e);
       this._permissions.set({});
+      this._permissionsFailed.set(true);
     }
   }
 
@@ -109,6 +120,7 @@ export class AuthService {
     localStorage.removeItem(USER_KEY);
     this._user.set(null);
     this._permissions.set({});
+    this._permissionsFailed.set(false);
     this.restored = false;
   }
 

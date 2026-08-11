@@ -21,21 +21,31 @@ public class DeploymentController {
 
     private static final Logger log = LoggerFactory.getLogger(DeploymentController.class);
 
-    private final ResourceRepository store;
-    private final ServiceAdapter     swarm;
-    private final ResourceDiffer     differ;
-    private final RiggerEventBus     eventBus;
-    private final ObjectMapper       mapper = new ObjectMapper();
+    private final ResourceRepository      store;
+    private final ServiceAdapter          swarm;
+    private final ResourceDiffer          differ;
+    private final RiggerEventBus          eventBus;
+    private final ServiceBindingResolver  bindings;
+    private final ObjectMapper            mapper = new ObjectMapper();
 
     public DeploymentController(ResourceRepository store, ServiceAdapter swarm,
-                                 ResourceDiffer differ, RiggerEventBus eventBus) {
+                                 ResourceDiffer differ, RiggerEventBus eventBus,
+                                 ServiceBindingResolver bindings) {
         this.store = store; this.swarm = swarm; this.differ = differ; this.eventBus = eventBus;
+        this.bindings = bindings;
     }
 
     public int reconcile() {
         var desired = store.findAllByKind("Deployment");
         var actual  = swarm.listManaged();          // returns List<Service> from docker-java
-        var plan    = differ.diff(desired, actual, DeploymentSpec.class, swarm::computeSpecHash);
+
+        // Resolved ONCE per cycle. The same map feeds the hash lambda below and the create/update
+        // calls further down: resolving separately for each would risk the hash written differing
+        // from the hash compared, and a Deployment that then updates on every cycle forever.
+        var bindingsByDeployment = bindings.resolveAll();
+
+        var plan = differ.diff(desired, actual, DeploymentSpec.class,
+            (meta, spec) -> swarm.computeSpecHash(meta, spec, bindingOf(bindingsByDeployment, meta)));
 
         if (plan.isEmpty()) {
             log.debug("DeploymentController: {} in sync", plan.unchanged());
@@ -49,7 +59,8 @@ public class DeploymentController {
         int changes = 0;
         for (var item : plan.toCreate()) {
             try {
-                swarm.create(item.meta(), (DeploymentSpec) item.spec());
+                swarm.create(item.meta(), (DeploymentSpec) item.spec(),
+                    bindingOf(bindingsByDeployment, item.meta()));
                 eventBus.publish(new ResourceAppliedEvent(
                     new ResourceRef(ResourceKind.DEPLOYMENT, item.meta().namespace(), item.meta().name()),
                     "operator", true));
@@ -61,7 +72,8 @@ public class DeploymentController {
 
         for (var item : plan.toUpdate()) {
             try {
-                swarm.update(item.existing(), item.meta(), (DeploymentSpec) item.spec());
+                swarm.update(item.existing(), item.meta(), (DeploymentSpec) item.spec(),
+                    bindingOf(bindingsByDeployment, item.meta()));
                 eventBus.publish(new ResourceAppliedEvent(
                     new ResourceRef(ResourceKind.DEPLOYMENT, item.meta().namespace(), item.meta().name()),
                     "operator", false));
@@ -86,5 +98,9 @@ public class DeploymentController {
             }
         }
         return changes;
+    }
+
+    private static ServiceBinding bindingOf(java.util.Map<String, ServiceBinding> bindings, ObjectMeta meta) {
+        return bindings.get(meta.namespace() + "/" + meta.name());
     }
 }

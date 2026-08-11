@@ -66,6 +66,16 @@ for Secret applies record `"<redacted-secret-data>"`.
 5. Verify by calling it against a running server. Compilation proves nothing about serialisation,
    RBAC, or path resolution — several bugs here compiled fine and failed only at runtime.
 
+**Optional request-body fields must not be primitives.** A record component of type `boolean` makes
+the field mandatory in practice: omitting it fails deserialisation ("Cannot map `null` into type
+`boolean`") and, unmapped, surfaced as a 500. `ApplyRequest` keeps `boolean dryRun()` for callers but
+takes a boxed `Boolean` in a `@JsonCreator` factory that normalises null to false.
+
+**Reject bad input with a status that says whose fault it is.** `InvalidRequestException` → 400 for
+query/path parameters, with a message we author (so it is safe to return, unlike an uncaught
+exception). A rejected value must be distinguishable from an empty result — an unknown metric name
+returning `[]` reads as "no data yet" to whoever is looking at a flat chart.
+
 ## Persistence
 
 SQLite via Spring Data JPA + Flyway (`rigger-store/src/main/resources/db/migration/`, `V<n>__name.sql`).

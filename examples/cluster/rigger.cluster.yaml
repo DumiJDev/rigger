@@ -1,0 +1,75 @@
+# Cluster manifest — infrastructure, not a workload.
+#
+# This file is NOT applied through `riggerctl apply` and must NOT live in a directory the
+# GitOps agent polls: `kind: Cluster` is unknown to the workload manifest parser, and one
+# unknown kind aborts the whole GitOps sync. Keep it in examples/cluster/ (or anywhere
+# outside the polled paths) and use it with:
+#
+#   riggerctl cluster up   -f examples/cluster/rigger.cluster.yaml
+#   riggerctl cluster sync -f examples/cluster/rigger.cluster.yaml
+#
+# `cluster up` SSHes into each node, installs Docker if missing, runs `docker swarm init`
+# on the primary and joins the rest. `cluster sync` re-reads this file and joins any node
+# that is declared here but not yet in the swarm — that is how you grow the cluster.
+#
+# NOTE: the orchestration logic exists (ClusterOrchestrator) but is not yet wired to an
+# HTTP endpoint — see the "Known gaps" section of CLAUDE.md.
+apiVersion: rigger.io/v1
+kind: Cluster
+metadata:
+  name: demo-cluster
+
+spec:
+  docker:
+    version: "26.1"
+    channel: stable          # stable | test | nightly — anything else is rejected
+
+  # SSH credentials used for every node unless the node overrides them.
+  # First connection to a host accepts and stores its key in ~/.rigger/known_hosts
+  # (trust on first use); a later key mismatch is refused.
+  defaults:
+    ssh:
+      user: ubuntu
+      privateKeyPath: ~/.ssh/rigger_id_ed25519
+      port: 22
+
+  nodes:
+    # Start with exactly ONE node. `primary: true` is where `docker swarm init` runs, and
+    # exactly one node must have it (unless spec.dev.enabled is true) — two primaries, or
+    # none, is a validation error, not a warning.
+    - name: manager-01
+      ip: 10.0.0.10
+      role: manager          # manager | worker
+      primary: true
+      autoProvision: true    # install Docker over SSH if it isn't there
+
+    # To grow the cluster: uncomment a node, commit, then run
+    #   riggerctl cluster sync -f examples/cluster/rigger.cluster.yaml
+    # Do NOT set primary: true on it — the swarm already has its init node.
+    #
+    # - name: worker-01
+    #   ip: 10.0.0.20
+    #   role: worker
+    #   autoProvision: true
+    #   # Per-node SSH override, e.g. a different user or a non-standard port:
+    #   ssh:
+    #     user: debian
+    #     privateKeyPath: ~/.ssh/rigger_id_ed25519
+    #     port: 2222
+    #
+    # A second manager for quorum (Swarm wants an odd number of managers):
+    # - name: manager-02
+    #   ip: 10.0.0.11
+    #   role: manager
+    #   autoProvision: true
+
+  # Dev mode: talk to the local Docker socket instead of provisioning over SSH. With
+  # dev.enabled: true the "exactly one primary" rule is not enforced, which is what lets a
+  # laptop with `docker swarm init` already run act as the whole cluster.
+  dev:
+    enabled: false
+    dockerSocket: /var/run/docker.sock
+
+# Not shown on purpose: `spec.nodes[].labels`. The JSON schema accepts it, but
+# ClusterManifestParser discards it (every node gets an empty label map), so putting node
+# labels here would silently do nothing.

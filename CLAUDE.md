@@ -40,6 +40,46 @@ for Spring MVC's implicit `@PathVariable`/`@RequestParam` name binding (e.g.
 any endpoint relying on implicit parameter names throws at request time, not at compile time —
 easy to miss until you actually call that specific endpoint.
 
+### Scheduling and thread budget
+
+Five `@Scheduled` methods share one Spring pool: `ReconciliationLoop.reconcile` (15s),
+`HpaController.reconcile` (30s), `MetricsSampler.sample` (30s), `MetricsSampler.prune` (1h),
+`GitOpsAgent.poll` (60s). Boot's default pool size is **1**, so `application.yaml` sets
+`spring.task.scheduling.pool.size` (default 5, `RIGGER_SCHEDULER_POOL_SIZE`) — one thread per
+method, so none can delay another.
+
+Not cosmetic. HPA and metrics ticks block on one Docker `statsCmd` per running container (~2s each,
+measured), so with 4 Deployments × 2 replicas the reconcile loop was observed running every 24–26s
+against its configured 15s, purely from queueing. Forced A/B on the same jar at a 10s interval:
+pool=1 → mean 17.35s, 19 of 20 ticks late; pool=5 → mean 10.54s, 0 of 15 late. Thread dumps confirm
+two scheduler threads blocked in Docker I/O simultaneously, which one thread cannot do.
+**If you add a `@Scheduled` method, raise the pool size with it.**
+
+Raising the pool made a latent SQLite problem reachable: one writer at a time means a concurrent
+write fails immediately with `SQLITE_BUSY`, which never happened while the jobs took turns.
+`StoreAutoConfiguration` now sets `busyTimeout(5000)`, and `MetricsSampler`'s `saveAll` is guarded so
+a contended write costs one round rather than the whole method.
+
+`spring.threads.virtual.enabled` is deliberately **not** set: it swaps the pool for a
+`SimpleAsyncTaskScheduler`, making the size setting silently inert, and on JDK 21–23 a virtual thread
+blocking inside `synchronized` pins its carrier — which both sqlite-jdbc and docker-java's HttpClient
+do. Concurrency where it matters is already explicit via `newVirtualThreadPerTaskExecutor()`.
+
+### Container image
+
+`docker build -t rigger:local .` at the repo root. Multi-stage on purpose: the build stage runs the
+full Maven build including the console and then **asserts** `BOOT-INF/classes/static/ui/index.html`
+is in the jar, so a fresh clone cannot produce a UI-less image the way copying `target/*.jar` could.
+It uses `-Dmaven.test.skip=true`, not `-DskipTests` — the latter still compiles test sources, so a
+checkout with a broken test would fail an image build that uses nothing from them.
+
+Runtime is `eclipse-temurin:21-jre-jammy` (glibc, because sqlite-jdbc loads a bundled native
+library), non-root uid/gid 10001, `/var/lib/rigger` as a volume with `RIGGER_DB_PATH` pointing into
+it, and `-XX:MaxRAMPercentage=70` rather than a fixed `-Xmx`: under `--memory 1g` the JVM chose a
+718 MiB heap where the same JVM on a 7.4 GB host chose 1.85 GB. Reaching Swarm needs
+`-v /var/run/docker.sock:/var/run/docker.sock --group-add "$(stat -c %g /var/run/docker.sock)"`,
+since the process is non-root. Not covered by CI yet — built and run by hand.
+
 ### Full build
 
 ```bash
@@ -172,14 +212,95 @@ provisioning (`cluster up`/`sync` are never exercised), and HPA scaling under lo
   JPA entities mapping to `TEXT`/`INTEGER`-typed SQLite columns (timestamps, booleans) must
   set `columnDefinition` explicitly to match — Hibernate's schema *validate* mode is strict
   about this even though SQLite itself is dynamically typed.
+- **Brand assets live in `rigger-console/public/brand/`** with their own README, which is the place
+  to read before touching them. Three traps worth knowing here too: `currentColor` only inherits in
+  *inline* SVG, so `<img>` and favicon use needs colour-explicit copies; an XML comment cannot contain
+  `--`, so writing a CSS custom property name like `--masthead-text` in one silently invalidates the
+  file and the browser shows a broken-image icon with no console error; and Tailwind's preflight sets
+  `img { height: auto }`, which overrides an HTML `height` attribute — a lockup sized that way
+  computed to 0×0 while still reporting as loaded with a correct natural size. Size brand images with
+  utility classes, never with the attribute.
 - **Console**: Angular 22 (standalone + signals), served at `/ui/` from the same jar and origin as
-  the API — which is why no CORS configuration exists anywhere and shouldn't be added. `UiController`
-  forwards route-shaped paths to `index.html` for deep links, but deliberately excludes any segment
-  containing a dot: a blanket `/ui/**` forward also matches `index.html` and every hashed asset, so
-  the target re-matches the mapping and recurses until the request dies with a StackOverflowError.
+  the API — which is why no CORS configuration exists anywhere and shouldn't be added.
+  `UiResourceConfig` resolves `/ui/**` by **file existence** and falls back to `index.html` only for
+  **route-shaped** paths — ones whose last segment has no dot. Both halves of that sentence are scar
+  tissue. A blanket `/ui/**` forward also matched `index.html` itself and recursed until the request
+  died with a StackOverflowError. Then existence-based resolution fixed the recursion but kept an
+  *unconditional* fallback, so any absent file came back as the SPA shell with `200 text/html`: that
+  is how a missing `i18n/en.json` once rendered every page blank, with nothing in the browser console
+  to explain it, and it was still live until deleting `favicon.ico` produced an HTML favicon. A
+  mistyped asset must 404. CI asserts all three cases — real asset, route, missing asset — because
+  each of the two past bugs passed the check for the other.
   Auth is the same JWT the CLI uses, held in `localStorage`; there is no refresh endpoint, so a 401
   means re-login rather than a silent renewal. The console reads `GET /auth/permissions` to decide
   which actions to offer instead of hard-coding a copy of the RBAC table.
+
+- **`RiggerApplication` carries `@ComponentScan(basePackages = "io.rigger")`, which overrides every
+  module's own bean registration.** Any `@Component` anywhere under `io.rigger` is registered by the
+  application's own scan, so a `@ConditionalOnProperty` or an exclude filter in that module's
+  `@AutoConfiguration` **cannot** suppress it. Found the hard way wiring `rigger.operator.enabled`:
+  the idiomatic conditional-import version compiled, started, and did nothing — the loops still
+  ticked five times in 60 seconds with the flag off. `OperatorAutoConfiguration` therefore removes
+  the three loop bean definitions in a `BeanFactoryPostProcessor`, which is the only mechanism a
+  single module can rely on while that blanket scan exists. Narrow the scan and this can go back to
+  `@ConditionalOnProperty` on the three classes.
+- **`rigger.operator.enabled=false` stops reconciliation, HPA and metrics sampling only.** The REST
+  API, console, live metrics endpoints and GitOps keep working. `@EnableScheduling` stays
+  unconditional on purpose: gating it would also stop `GitOpsAgent.poll`, which is registered
+  unconditionally so GitOps can be switched on from the console without a restart. Verified: 0
+  reconcile ticks and 0 new `metric_samples` rows over 70s, with the API and `/ui/` still serving.
+  This property previously existed and had **no callers at all** — a flag that silently does nothing
+  is worse than no flag.
+
+- **Ingress is fields on the Service kind** (`spec.ingress.host/path/tls`), not a new kind. Honoured
+  only for `LoadBalancer`; `ManifestValidator` rejects it on `ClusterIP` rather than ignoring it.
+  `ServiceSpec` keeps an explicit 3-argument constructor so `ComposeConverter` still compiles.
+- **Rigger provisions Traefik itself.** `TraefikController` runs in the reconciliation loop,
+  sequentially and first, because it creates the overlay network the workload controllers attach to.
+  Traefik is built as a raw Swarm service rather than a Rigger Deployment because it needs the Docker
+  socket bind-mounted and a manager constraint — and `DeploymentSpec` deliberately has **no volumes
+  field**: adding one would let any namespace-scoped DEPLOYER bind-mount `/var/run/docker.sock` and
+  own the cluster. Volumes are a legitimate future feature, but they need an allowlist and an RBAC
+  design of their own, not a side entrance opened to bootstrap an ingress.
+- **The controller must never carry `rigger.io/managed=true`.** `DeploymentController` deletes managed
+  services with no store row, so it would be garbage-collected within 15s. It carries
+  `rigger.io/component=ingress-controller` instead, and there is a comment on the constant saying so
+  because the next person will "helpfully" add it.
+- **Traefik v3.6 is the practical minimum, and this is the single most valuable thing learned here.**
+  Traefik ≤ 3.5 pins Docker API version 1.24 in its Swarm provider and cannot negotiate it; Engine 29
+  requires ≥ 1.40. Traefik still starts, still reports `1/1`, still answers HTTP — and discovers
+  nothing, so every host returns 404. `DOCKER_API_VERSION` does not help; the pin is in Traefik's
+  code. Measured against Engine 29.6.1: v3.4 fails, v3.5 fails, v3.6 works. **Every other check was
+  green while routing was completely dead** — the overlay network, the label set, the attachment by
+  ID, the replica count. Only `curl -H 'Host: …' http://127.0.0.1/` through Traefik found it, which
+  is also the only thing that catches a v2 label spelling (`traefik.docker.*` fails the same silent
+  way). Use `traefik.swarm.*` and `providers.swarm` only.
+- **Single writer per Swarm service.** `ServiceController` no longer writes anything — it only warns
+  about Services selecting nothing. `ServiceAdapter.updatePublishedPorts` is deleted and the
+  `existing.getEndpointSpec()` graft in `update()` is gone. Published ports, Traefik labels and the
+  network attachment all originate inside `buildServiceSpec()` from a `ServiceBinding` resolved
+  **once per cycle** by `ServiceBindingResolver` and shared between the hash lambda and the
+  create/update call. Two controllers writing the same service concurrently is what wiped published
+  ports before; the same race would have made Traefik labels vanish at random.
+- **Binding resolution is deterministic by contract, not by tidiness.** Service→Deployment matches and
+  duplicate ingress-host claims are both resolved by sorted tie-break, because an unstable spec-hash
+  makes the Swarm version index climb forever. That bug and its opposite — a hash that omits the
+  binding, so a change never applies — each pass the other's test, which is why CI asserts
+  convergence in **both** directions.
+- `ResourceDiffer`'s unused 2-argument `diff()` overload is **deleted**; it hashed with a divergent
+  `spec.hashCode()`. There is no 2-argument `computeSpecHash` either. Two entry points to a hash
+  function is exactly how reconciliation broke once already.
+- `buildLabels()` now applies `metadata.labels` **first**, so `rigger.io/*` and `traefik.*` always
+  win. A user label named `rigger.io/spec-hash` could previously freeze reconciliation.
+- **Ingress hosts are cluster-wide while RBAC is namespaced**, so `WorkloadController.apply()` refuses
+  a host already claimed by a Service in another namespace, and `ServiceBindingResolver` also lets the
+  lowest-sorting claim win at reconcile time. Without this, a DEPLOYER in one namespace could hijack
+  another team's hostname with an ordinary apply. That check is a plain store query and deliberately
+  **not** routed through RBAC: the caller must be told the host is taken, and by whom, without gaining
+  read access to the namespace holding it.
+- Adding an ingress to a Service **restarts that app's tasks**, because changing
+  `TaskTemplate.Networks` makes Swarm recreate them. Attachment happens only when an ingress is
+  configured, so enabling the feature does not restart every workload in the cluster.
 
 ## Security model (current state)
 
@@ -214,8 +335,14 @@ provisioning (`cluster up`/`sync` are never exercised), and HPA scaling under lo
   at the DB layer. Secret applies record `"<redacted-secret-data>"` instead of spec JSON.
 - **Error responses**: uncaught exceptions (`GlobalExceptionHandler.generic()`) return a generic
   message + correlation ID to the client; the real exception (message, stack trace) is logged
-  server-side tagged with that same ID. The four other handlers (403/404/422/401) already return
-  intentional, safe messages and are unchanged.
+  server-side tagged with that same ID. The other handlers return intentional, safe messages.
+  Three client-fault cases used to fall through to that generic 500 — a request that matched no
+  mapping (`NoResourceFoundException`), an unparseable body
+  (`HttpMessageNotReadableException`), and a bad query parameter (`InvalidRequestException`, e.g. an
+  unknown metric name) — so a caller's typo read as a server fault and logged a stack trace. They
+  now map to 404/400/400. `InvalidRequestException` carries a message we author, so unlike an
+  uncaught exception it is safe to return verbatim, and it is what lets a caller tell a typo from a
+  genuinely empty result.
 
 ## Known gaps / roadmap
 
@@ -226,15 +353,50 @@ Remaining gaps are feature-completion and polish:
 
 - Missing/broken endpoints referenced by `riggerctl`/README but absent in `rigger-api`:
   `cluster up`/`cluster sync` (logic exists in `ClusterOrchestrator`, just not wired to a
-  controller), pods listing, streaming logs (`riggerctl logs --follow` is broken end-to-end —
-  no server endpoint, and the CLI command bypasses its own authenticated HTTP client), `DELETE`
-  for Service/ConfigMap/Secret (only Deployment delete exists today), a read-only GitOps status
-  endpoint (the console's GitOps page calls it; `rigger-gitops` already tracks the state,
-  just needs a controller).
-- `rigger-operator`'s `ServiceController.reconcile()` (MVP, Fase 2.7): resolves the target
-  Deployment by selector match and republishes `LoadBalancer` ports via `EndpointSpec`/
-  `PortConfig`; `ClusterIP` stays a no-op since Swarm's overlay DNS already covers it. Full
-  ingress-controller-grade routing remains out of scope.
+  controller), and streaming logs (`riggerctl logs --follow` is broken end-to-end — no server
+  endpoint, and the CLI command bypasses its own authenticated HTTP client).
+  Pods listing, the read-only GitOps status endpoint, and `DELETE` for **all four** workload kinds
+  now exist and are runtime-verified (`WorkloadController` has `@DeleteMapping` for deployments,
+  services, configmaps and secrets; deleting the resource also removes the backing Docker
+  Config/Secret). This bullet claimed otherwise for a while after they landed — when you close a
+  gap, delete it from here, or the next person plans around a limitation that no longer exists.
+- **Two Rigger servers must never share one Swarm.** `ResourceDiffer` treats any service carrying
+  `rigger.io/managed=true` that has no matching row in *its own* database as an orphan and deletes
+  it, cluster-wide, on the first reconciliation cycle. Two instances with separate databases
+  therefore delete each other's services in a loop, each recreating its own. This is consistent
+  with the single-instance model (see Out of scope) but the failure mode is silent and looks like
+  random service churn — it cost real debugging time during a parallel-agent session. A
+  namespace-scoped or instance-scoped orphan filter is what would make it safe.
+- **`env[].valueFrom` is validated and then silently dropped.** `ServiceAdapter.buildServiceSpec`
+  filters `e -> e.value() != null`, so a `configMapKeyRef`/`secretKeyRef` env var parses, passes
+  validation, applies successfully, and never reaches the container. `secretRefs` on a Deployment
+  likewise mounts nothing — nothing in `rigger-swarm-adapter` reads it. Both are documented in
+  `examples/README.md` as known limitations; neither should be advertised as working.
+- **The JSON schemas document shapes the parser rejects.** `deployment.schema.json` describes
+  `resources.limits.{cpu,memory}` and `strategy.type`, but `ResourceRequirements` is flat
+  (`cpuLimit`/`memoryLimit`/`cpuReserved`/`memoryReserved`) and `RollingUpdateStrategy` has no
+  `type` component — and `ManifestParser` uses a bare ObjectMapper with `FAIL_ON_UNKNOWN_PROPERTIES`
+  on. So a manifest can pass schema validation and then fail to parse. This is what made the README
+  example wrong for months. Someone has to decide which side moves; until then the flat form is the
+  one that works.
+- `/actuator/prometheus` is real now — `micrometer-registry-prometheus` was missing from every pom
+  while `application.yaml` advertised the endpoint, so it 404'd. Cost measured: +2.1 MB in the jar,
+  +7.7 MiB RSS, ~230 series / 41.7 KB in 53 ms per scrape. It is **authenticated**
+  (`SecurityAutoConfiguration` permits only `/actuator/health`), so a Prometheus server cannot
+  actually scrape it: JWTs last 15 minutes and there is no refresh endpoint. Making it scrapeable
+  means a scraper-specific credential or a separate unpublished management port — not widening the
+  filter chain. Until then it is a debugging endpoint you reach with an admin token.
+- **A server booting against an empty store deletes every rigger-managed Swarm service** — 9 in one
+  observed run. Correct orphan reconciliation, hazardous as a first-boot default; deserves a guard or
+  at least a loud warning. Related to the two-servers-on-one-Swarm hazard above, and the same root
+  cause: orphan detection is cluster-wide and database-relative.
+- `DELETE` can return a generic 500 on `SQLITE_BUSY` (`CannotAcquireLockException`) when
+  reconciliation is writing at the same moment. It succeeds on retry. Deserves a retry or a 409
+  rather than reading as a server fault.
+- `ServiceController` no longer writes to Swarm at all — see the single-writer decision above.
+  Published ports now flow through the Deployment path from a resolved `ServiceBinding`; the
+  controller only warns about Services whose selector matches nothing. `ClusterIP` remains a no-op
+  because Swarm's overlay DNS already covers it.
 - `ConfigMapController` (Fase 2.8) now creates a new, uniquely-named Docker Config version on
   content change instead of updating in place (Configs are immutable once created). Referencing
   Deployments pick up the new version on their own next reconciliation cycle — `ServiceAdapter`
@@ -252,17 +414,59 @@ Remaining gaps are feature-completion and polish:
   Deployment's tasks — no Prometheus dependency. Cost scales with task count per HPA cycle
   (default 30s); clusters with many tasks per Deployment will feel this as added latency,
   not a correctness issue.
+- **Metric history** is sampled server-side by `MetricsSampler` (rigger-operator) into
+  `metric_samples` (`V6`), every 30s by default, and read back via
+  `GET /api/v1/metrics/series?metric=&namespace=&name=&minutes=`. Server-side rather than
+  per-browser so history survives a reload and every operator sees the same picture. Metric names
+  are enumerated in `MetricNames` and an unknown one is a 400 — an empty array would be
+  indistinguishable from "no data yet". Cluster-wide series use `"cluster"` for both namespace and
+  name so every series has a full triple and one index serves every read.
+  - `MetricsCollector` is the single place current values are computed. The REST endpoints and the
+    sampler both use it; when they each computed the totals themselves, the number and the chart
+    above it disagreed within a day.
+  - `MetricsSampler.prune()` runs on its own hourly schedule (not inside the 30s sample, which
+    would issue ~2900 no-op deletes a day) and trims `metric_samples` past 24h **and `events` past
+    14 days** — `EventRepository.deleteOlderThan` existed unscheduled since `events` was added, so
+    that table had grown without bound.
+  - Volume is the product of two knobs and nothing warns you: 9 cluster series + 3 per Deployment
+    every 30s is ~200k rows/day at 20 Deployments, fine in SQLite at 24h retention; a week of
+    retention at 5s sampling is 8M.
 - The console covers login, namespace switching, topology (graph + list), the four workload kinds,
   pods with SSE log streaming, YAML apply, cluster ops, GitOps config, audit and users. Not yet
-  done there: editing a resource's YAML in place (apply is create/replace only), and any
-  time-series charting — the metrics endpoints are point-in-time samples, so the console would have
-  to keep its own window.
+  done there: editing a resource's YAML in place (apply is create/replace only), and charting the
+  series above (Fase 4 of the console redesign).
 
 - **Compose input** is detected server-side by content (top-level `services` map, no
   `apiVersion`/`kind`) and converted by `ComposeConverter` before anything else in
   `WorkloadController.apply()`, so the CLI and console both get it without knowing the format.
   Converted manifests carry no source YAML, so JSON-Schema validation is skipped for them — the
   converter builds domain records directly and their constructors do the validating.
+- **The converter reports what it cannot carry across, and refuses the losses that matter.** It used
+  to read only `image`, `deploy.replicas`, `environment` (map form only) and `ports` (short form
+  only), and drop everything else in silence — including `volumes`, `command`, `healthcheck`,
+  `networks` and `labels`. Worse, `configs.*.file` produced a ConfigMap whose value was the
+  *filename*, `environment` in list form yielded zero variables, and a long-form `ports` entry threw
+  and vanished. Every field is now either converted or named in a structured report, with a severity
+  rule that is the whole design:
+  - **ERROR** — the workload would run but would not be the workload described (no image, no data,
+    no config, the wrong process, or a value only the user's filesystem holds). These **block the
+    apply with a 422** listing every offending path; `?force=true` is the single explicit override.
+  - **WARNING** — same workload, less supervision or topology (healthcheck, placement, labels).
+  - **INFO** — translated rather than literal (a published host port becoming a LoadBalancer).
+  Blocking is the point: a warning nobody reads is exactly why `volumes:` was being dropped.
+- **Seeing a conversion** — `POST /api/v1/namespaces/{ns}/convert` returns the generated YAML plus
+  the report and persists nothing; `riggerctl convert -f docker-compose.yml > out.yaml` puts YAML on
+  stdout and the report on stderr, exiting non-zero when blocked, so the redirect stays clean. The
+  endpoint authorizes `get`/`Deployment`, deliberately **not** `apply`: converting is a pure function
+  of the caller's own input, so a VIEWER must be able to review what a Compose file would become.
+  `ApplyCommand` has no `--force` flag, so the CLI route for an intentionally lossy apply is
+  convert-then-apply-the-YAML.
+- Compose sizes are not Kubernetes sizes: `128M` is not `128Mi`, and docker-java's
+  `MemoryUnit.toBytes` cannot parse the Compose spelling. Passing one through produced a manifest
+  that applied and validated cleanly and then threw inside `ServiceAdapter.create` on **every**
+  reconciliation cycle, so the Deployment never appeared in Swarm and the only symptom was a
+  repeating "Failed to create service". The converter now normalises the units it understands and
+  drops the rest with a warning.
 - **Dry run must not persist.** `apply(dryRun=true)` stops after parse, RBAC and schema validation
   and reports each resource as `validated`. This was broken originally: `dryRun` only suppressed the
   audit payload while still saving, so a "validation" really applied and then reconciled onto Swarm.
@@ -301,8 +505,10 @@ need runtime convergence checks, not just "does it compile":
 ## Out of scope (do not re-litigate without a fresh decision)
 
 - Real mTLS / client-certificate authentication.
-- Ingress-controller-grade Service routing (path routing, TLS termination, vhosts) — Service
-  reconciliation should stay to Swarm published-port mapping.
+- Ingress beyond host-based HTTP routing. `spec.ingress` covers host, path and TLS through a
+  Rigger-provisioned Traefik; middlewares, rate limiting, auth forwarding and multi-backend
+  weighting are not in scope. (Host routing itself WAS out of scope until the user asked for it —
+  this line is the remaining boundary, not a ban on the feature.)
 - GraalVM native-image packaging for `riggerctl`.
 - Multi-instance/HA `rigger-server` (single-instance, SQLite-backed operator is the model).
 - A RBAC administration UI (only the enforcement mechanism is in scope for hardening).

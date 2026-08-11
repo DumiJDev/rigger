@@ -7,6 +7,7 @@ import { AuthService } from '../../core/auth.service';
 import { PodResponse } from '../../core/api.models';
 import { LogStreamService } from '../../core/log-stream.service';
 import { NamespaceService } from '../../core/namespace.service';
+import { RefreshService } from '../../core/refresh.service';
 import { DataState } from '../../shared/data-state';
 import { PageHeader } from '../../shared/page-header';
 import { StatusBadge } from '../../shared/status-badge';
@@ -22,6 +23,7 @@ const MAX_LINES = 2000;
 export class PodsPage {
   private readonly api = inject(ApiService);
   private readonly ns = inject(NamespaceService);
+  private readonly refresh = inject(RefreshService);
   private readonly logs = inject(LogStreamService);
   readonly auth = inject(AuthService);
 
@@ -48,6 +50,7 @@ export class PodsPage {
   constructor() {
     effect(() => {
       const namespace = this.ns.current();
+      this.refresh.tick();
       void this.load(namespace);
     });
   }

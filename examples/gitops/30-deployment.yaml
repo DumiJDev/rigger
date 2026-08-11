@@ -1,0 +1,78 @@
+# Deployment — the shopfront web tier, with autoscaling.
+#
+# Reconciled into a Docker Swarm replicated service named rigger-demo-shopfront-web.
+apiVersion: rigger.io/v1
+kind: Deployment
+metadata:
+  name: shopfront-web
+  namespace: demo
+  labels:
+    app: shopfront
+    part-of: shopfront
+spec:
+  replicas: 2
+
+  # Services select a Deployment by matching these labels (a Service's selector must be
+  # a subset of this map). Keep them stable — they are how the Service, the topology
+  # graph and the HPA find this workload.
+  selector:
+    app: shopfront-web
+    tier: web
+
+  image: nginx:alpine
+
+  env:
+    # Literal values are passed straight through to the container.
+    - name: APP_NAME
+      value: "shopfront-web"
+    - name: TZ
+      value: "Africa/Luanda"
+    # valueFrom references are parsed, validated and drawn in the console topology, but
+    # are NOT yet injected into the container by the Swarm adapter (see examples/README.md
+    # → "Known limitations"). Use configMapRefs/secretRefs below, or literal env values,
+    # for anything the container must actually read today.
+    - name: API_URL
+      valueFrom:
+        configMapKeyRef:
+          name: shopfront-config
+          key: api.url
+    - name: DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: shopfront-secrets
+          key: db.password
+
+  # ResourceRequirements is FLAT — cpuLimit / memoryLimit / cpuReserved / memoryReserved.
+  # The Kubernetes-style nested `limits: {cpu: ..., memory: ...}` form does NOT parse:
+  # the manifest parser fails on unknown properties and rejects the whole Deployment.
+  resources:
+    cpuLimit: "0.25"
+    memoryLimit: "128Mi"
+    cpuReserved: "0.05"
+    memoryReserved: "32Mi"
+
+  # RollingUpdateStrategy has NO `type` component — adding `type: RollingUpdate` makes the
+  # manifest fail to parse. Rolling update is the only strategy Rigger implements.
+  strategy:
+    maxUnavailable: 1
+    delaySeconds: 5
+    failureAction: PAUSE       # PAUSE | ROLLBACK | CONTINUE
+
+  # Autoscaling. Metrics come from Docker per-container stats (no Prometheus), sampled by
+  # the operator's HPA cycle; replicas above are the starting point, the HPA owns them
+  # from then on and keeps them within [minReplicas, maxReplicas].
+  hpa:
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70     # 1..100
+    targetMemoryUtilizationPercent: 80     # 1..100
+    scaleDownCooldownSeconds: 120
+
+  # ConfigMap contents are mounted into the container as a file at /configmap/<name>.
+  configMapRefs:
+    - shopfront-config
+
+  # Secrets referenced here are reconciled into Docker Secrets by the operator; the
+  # Deployment-side mount is not wired up yet (see Known limitations).
+  secretRefs:
+    - shopfront-secrets

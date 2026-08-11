@@ -1,85 +1,66 @@
 package io.rigger.api.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.dockerjava.api.model.TaskState;
 import io.rigger.api.dto.ClusterMetricsResponse;
 import io.rigger.api.dto.DeploymentMetricsResponse;
-import io.rigger.core.domain.cluster.NodeStatus;
+import io.rigger.api.dto.MetricSeriesResponse;
 import io.rigger.core.domain.resource.DeploymentSpec;
-import io.rigger.core.domain.security.RiggerContext;
-import io.rigger.core.exception.ResourceNotFoundException;
 import io.rigger.core.domain.resource.ResourceKind;
-import io.rigger.operator.autoscaler.MetricsSource;
+import io.rigger.core.domain.security.RiggerContext;
+import io.rigger.core.exception.InvalidRequestException;
+import io.rigger.core.exception.ResourceNotFoundException;
+import io.rigger.operator.metrics.MetricNames;
+import io.rigger.operator.metrics.MetricsCollector;
 import io.rigger.security.rbac.RbacPolicyEngine;
-import io.rigger.store.repository.NodeRepository;
+import io.rigger.store.repository.MetricSampleRepository;
 import io.rigger.store.repository.ResourceRepository;
-import io.rigger.swarm.adapter.ServiceAdapter;
 import jakarta.servlet.http.HttpServletRequest;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+
 /**
- * Point-in-time metrics for the console. Everything here is sampled per request — Rigger stores no
- * time series, so charts come from the console polling and keeping its own window. Deliberately
- * kept cheap: the per-Deployment CPU read costs one Docker stats call per running task.
+ * Metrics for the console: current values, plus the history {@code MetricsSampler} records.
+ *
+ * <p>The current-value endpoints delegate to {@link MetricsCollector}, the same component the
+ * sampler uses — computing the totals here as well is how the number and the chart above it end up
+ * disagreeing.
  */
 @RestController
 @RequestMapping("/api/v1")
 public class MetricsController {
 
-    private static final Logger log = LoggerFactory.getLogger(MetricsController.class);
+    /** A day, matching the sampler's default retention — asking for more returns what exists. */
+    private static final Duration MAX_WINDOW     = Duration.ofHours(24);
+    private static final Duration DEFAULT_WINDOW = Duration.ofHours(1);
 
-    private final ResourceRepository store;
-    private final NodeRepository     nodeRepo;
-    private final ServiceAdapter     swarm;
-    private final MetricsSource      metrics;
-    private final RbacPolicyEngine   rbac;
-    private final ObjectMapper       mapper = new ObjectMapper();
+    private final ResourceRepository     store;
+    private final MetricSampleRepository samples;
+    private final MetricsCollector       collector;
+    private final RbacPolicyEngine       rbac;
+    private final ObjectMapper           mapper = new ObjectMapper();
 
-    public MetricsController(ResourceRepository store, NodeRepository nodeRepo,
-                             ServiceAdapter swarm, MetricsSource metrics, RbacPolicyEngine rbac) {
-        this.store = store; this.nodeRepo = nodeRepo;
-        this.swarm = swarm; this.metrics = metrics; this.rbac = rbac;
+    public MetricsController(ResourceRepository store, MetricSampleRepository samples,
+                             MetricsCollector collector, RbacPolicyEngine rbac) {
+        this.store = store; this.samples = samples;
+        this.collector = collector; this.rbac = rbac;
     }
 
     @GetMapping("/namespaces/{namespace}/deployments/{name}/metrics")
     public ResponseEntity<DeploymentMetricsResponse> deploymentMetrics(
             @PathVariable String namespace, @PathVariable String name, HttpServletRequest req) {
 
-        var ctx = ctx(req, namespace);
-        rbac.authorize(ctx, "get", "Deployment");
+        rbac.authorize(ctx(req, namespace), "get", "Deployment");
 
-        var entity = store.findByKindAndNamespaceAndName("Deployment", namespace, name)
-            .orElseThrow(() -> new ResourceNotFoundException(ResourceKind.DEPLOYMENT, namespace, name));
+        var spec = deploymentSpec(namespace, name);
+        var d    = collector.deployment(namespace, name, spec.replicas());
+        var hpa  = spec.hpa();
 
-        DeploymentSpec spec;
-        try {
-            spec = mapper.readValue(entity.getSpecJson(), DeploymentSpec.class);
-        } catch (Exception e) {
-            throw new IllegalStateException("Stored spec for " + namespace + "/" + name + " is unreadable", e);
-        }
-
-        int running = 0;
-        var svc = swarm.find(namespace, name);
-        if (svc.isPresent()) {
-            running = (int) swarm.listTasks(svc.get().getId()).stream()
-                .filter(t -> t.getStatus() != null && t.getStatus().getState() == TaskState.RUNNING)
-                .count();
-        }
-
-        double cpu = 0;
-        try {
-            cpu = metrics.averageCpuPercent(namespace, name);
-        } catch (Exception e) {
-            // A metrics hiccup must not turn a dashboard refresh into a 500 — report 0 and move on.
-            log.debug("CPU metrics unavailable for {}/{}: {}", namespace, name, e.getMessage());
-        }
-
-        var hpa = spec.hpa();
         return ResponseEntity.ok(new DeploymentMetricsResponse(
-            namespace, name, cpu, spec.replicas(), running,
+            namespace, name, d.cpuPercent(), d.desiredReplicas(), d.runningReplicas(),
             hpa != null,
             hpa != null ? hpa.minReplicas() : null,
             hpa != null ? hpa.maxReplicas() : null,
@@ -92,35 +73,93 @@ public class MetricsController {
      */
     @GetMapping("/cluster/metrics")
     public ResponseEntity<ClusterMetricsResponse> clusterMetrics(HttpServletRequest req) {
-        var ctx = ctx(req, "cluster");
-        rbac.authorize(ctx, "get", "Cluster");
+        rbac.authorize(ctx(req, MetricNames.CLUSTER_SCOPE), "get", "Cluster");
 
-        long active = nodeRepo.findByStatus(NodeStatus.ACTIVE).size();
-        long total  = nodeRepo.count();
+        var c = collector.cluster();
+        return ResponseEntity.ok(new ClusterMetricsResponse(
+            c.activeNodes(), c.totalNodes(), c.managedServices(),
+            c.runningReplicas(), c.desiredReplicas(),
+            c.deployments(), c.services(), c.configMaps(), c.secrets()));
+    }
 
-        int managedServices = 0, running = 0, desired = 0;
-        try {
-            var services = swarm.listManaged();
-            managedServices = services.size();
-            for (var s : services) {
-                if (s.getSpec() != null && s.getSpec().getMode() != null
-                        && s.getSpec().getMode().getReplicated() != null) {
-                    desired += (int) s.getSpec().getMode().getReplicated().getReplicas();
-                }
-                running += (int) swarm.listTasks(s.getId()).stream()
-                    .filter(t -> t.getStatus() != null && t.getStatus().getState() == TaskState.RUNNING)
-                    .count();
-            }
-        } catch (Exception e) {
-            log.debug("Swarm totals unavailable: {}", e.getMessage());
+    /**
+     * One metric's history, oldest point first.
+     *
+     * <p>Cluster metrics need no {@code namespace}/{@code name} and require cluster-admin;
+     * Deployment metrics require both and are authorized against the namespace, so a scoped
+     * identity can chart its own workloads but not the cluster's.
+     */
+    @GetMapping("/metrics/series")
+    public ResponseEntity<MetricSeriesResponse> series(
+            @RequestParam String metric,
+            @RequestParam(required = false) String namespace,
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) Integer minutes,
+            HttpServletRequest req) {
+
+        if (!MetricNames.isKnown(metric)) {
+            throw new InvalidRequestException("Unknown metric '" + metric + "'");
         }
 
-        return ResponseEntity.ok(new ClusterMetricsResponse(
-            active, total, managedServices, running, desired,
-            store.findAllByKind("Deployment").size(),
-            store.findAllByKind("Service").size(),
-            store.findAllByKind("ConfigMap").size(),
-            store.findAllByKind("Secret").size()));
+        String ns, resource;
+        if (MetricNames.isClusterScoped(metric)) {
+            ns = resource = MetricNames.CLUSTER_SCOPE;
+            rbac.authorize(ctx(req, MetricNames.CLUSTER_SCOPE), "get", "Cluster");
+        } else {
+            if (namespace == null || namespace.isBlank() || name == null || name.isBlank()) {
+                throw new InvalidRequestException(
+                    "Metric '" + metric + "' is per-Deployment and requires namespace and name");
+            }
+            ns = namespace;
+            resource = name;
+            rbac.authorize(ctx(req, namespace), "get", "Deployment");
+        }
+
+        var since  = Instant.now().minus(window(minutes));
+        var points = samples.series(metric, ns, resource, since).stream()
+            .map(s -> new MetricSeriesResponse.Point(s.getSampledAt(), s.getValue()))
+            .toList();
+
+        return ResponseEntity.ok(new MetricSeriesResponse(metric, ns, resource, points));
+    }
+
+    /**
+     * Names with recorded samples for a per-Deployment metric, so a chart can plot every series in
+     * a namespace without first listing Deployments and discovering half have no history.
+     */
+    @GetMapping("/namespaces/{namespace}/metrics/series-names")
+    public ResponseEntity<List<String>> seriesNames(
+            @PathVariable String namespace,
+            @RequestParam String metric,
+            @RequestParam(required = false) Integer minutes,
+            HttpServletRequest req) {
+
+        rbac.authorize(ctx(req, namespace), "get", "Deployment");
+
+        if (!MetricNames.DEPLOYMENT_METRICS.contains(metric)) {
+            throw new InvalidRequestException(
+                "Metric '" + metric + "' is not per-Deployment and has no series names");
+        }
+        return ResponseEntity.ok(
+            samples.namesFor(metric, namespace, Instant.now().minus(window(minutes))));
+    }
+
+    /** Clamped rather than rejected: a window wider than retention is a reasonable ask, it just has no more data. */
+    private static Duration window(Integer minutes) {
+        if (minutes == null) return DEFAULT_WINDOW;
+        if (minutes <= 0) throw new InvalidRequestException("minutes must be positive");
+        var requested = Duration.ofMinutes(minutes);
+        return requested.compareTo(MAX_WINDOW) > 0 ? MAX_WINDOW : requested;
+    }
+
+    private DeploymentSpec deploymentSpec(String namespace, String name) {
+        var entity = store.findByKindAndNamespaceAndName("Deployment", namespace, name)
+            .orElseThrow(() -> new ResourceNotFoundException(ResourceKind.DEPLOYMENT, namespace, name));
+        try {
+            return mapper.readValue(entity.getSpecJson(), DeploymentSpec.class);
+        } catch (Exception e) {
+            throw new IllegalStateException("Stored spec for " + namespace + "/" + name + " is unreadable", e);
+        }
     }
 
     private RiggerContext ctx(HttpServletRequest req, String namespace) {

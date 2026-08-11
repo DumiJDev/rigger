@@ -93,6 +93,35 @@ export interface DeploymentMetrics {
   hpaTargetCpu: number | null;
 }
 
+/**
+ * Names match the server's enumerated {@code MetricNames}. Kept as a union rather than plain
+ * strings so a typo is a compile error here — the server answers an unknown name with a 400, but
+ * finding that out at runtime is worse than not shipping it.
+ */
+export type ClusterMetricName =
+  | 'nodes.active' | 'nodes.total' | 'services.managed'
+  | 'replicas.running' | 'replicas.desired'
+  | 'resources.deployments' | 'resources.services'
+  | 'resources.configmaps' | 'resources.secrets';
+
+export type DeploymentMetricName =
+  | 'deployment.cpu' | 'deployment.replicas.running' | 'deployment.replicas.desired';
+
+export type MetricName = ClusterMetricName | DeploymentMetricName;
+
+/** One point of a series. Short field names because a 24h window is thousands of these. */
+export interface MetricPoint {
+  t: string;
+  v: number;
+}
+
+export interface MetricSeries {
+  metric: MetricName;
+  namespace: string;
+  name: string;
+  points: MetricPoint[];
+}
+
 export interface TopologyNode {
   id: string;
   kind: string;
@@ -167,6 +196,27 @@ export interface GitOpsConfig {
 export interface ApplyResult {
   applied: number;
   resources: Array<{ kind: string; name: string; namespace: string; action: string }>;
+  /** Present only for docker-compose input, and only when the conversion lost something. */
+  composeIssues?: ComposeIssue[];
+}
+
+/**
+ * One thing the docker-compose converter could not carry across, with the Compose path it came
+ * from. ERROR means applying the Compose file is refused (the workload would be wrong, not just
+ * less supervised); WARNING and INFO are advisory.
+ */
+export interface ComposeIssue {
+  severity: 'ERROR' | 'WARNING' | 'INFO';
+  path: string;
+  message: string;
+}
+
+/** Response of POST /namespaces/{ns}/convert. Nothing is persisted by that call. */
+export interface ConvertResult {
+  yaml: string;
+  resources: Array<{ kind: string; name: string; namespace: string }>;
+  issues: ComposeIssue[];
+  blocked: boolean;
 }
 
 /** Spring Data's page envelope. */

@@ -1,0 +1,27 @@
+<!--
+  Favicon: the hitch mark reversed out of a filled violet tile.
+
+  A tile rather than the bare mark, because a favicon has no idea what it sits on. Browser tab strips
+  are light in one theme and near-black in the other, and a stroked violet mark on transparent either
+  vanishes into a dark strip or greys out on a light one. Carrying its own background is the only way
+  it reads in both.
+
+  Stroke weight is set so the rendered line is ~1.8px at 16×16 — the size that actually matters. The
+  earlier rigging candidate was discarded precisely because thin strokes turn to mush there, so this
+  is drawn heavier than the inline mark and inset less far than looks right in an editor.
+
+  #7A40DA is brand-600 (oklch(0.53 0.22 295)) in sRGB; hex rather than oklch because favicon
+  rasterisation is the least forgiving renderer in the stack.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Rigger">
+  <rect width="32" height="32" rx="7" fill="#7A40DA"/>
+  <g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-width="4.6">
+    <!-- The mark scaled to 0.78 and re-centred; stroke-width is pre-divided by that scale so the
+         visual weight stays put instead of shrinking with the geometry. -->
+    <g transform="translate(16 16) scale(0.78) translate(-16 -16)">
+      <path d="M5 26 C5 14, 27 18, 27 6"/>
+      <path d="M27 26 C27 14, 5 18, 5 6"/>
+    </g>
+  </g>
+  <circle cx="16" cy="16.9" r="2.9" fill="#FFFFFF"/>
+</svg>

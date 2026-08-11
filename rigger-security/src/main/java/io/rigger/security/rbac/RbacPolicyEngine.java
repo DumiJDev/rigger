@@ -19,6 +19,20 @@ public class RbacPolicyEngine {
 
     private static final Logger log = LoggerFactory.getLogger(RbacPolicyEngine.class);
 
+    /**
+     * Role → allowed (action, resource) pairs for every non-admin role.
+     *
+     * <p><strong>Only namespaced resources belong here.</strong> {@link #authorize} gates every
+     * non-admin on {@code identity.isScopedTo(ctx.namespace())} <em>before</em> consulting this
+     * table, and {@code RiggerAuthenticationFilter} resolves a cluster-scoped path (no
+     * {@code /namespaces/{ns}/} segment) to the literal namespace {@code "cluster"} — which no
+     * namespace-scoped identity is ever scoped to. So a row here for a cluster-scoped kind
+     * (Node, GitOps, Cluster) can never be reached: the gate denies first and the row is never
+     * read. DEPLOYER and VIEWER used to carry {@code get Node} and {@code get GitOps} exactly
+     * like that, which made {@code /auth/permissions} advertise pages to the console that the
+     * server then 403'd. Those kinds are admin-only (see {@link #ADMIN_ONLY}); granting them to
+     * a scoped role requires changing how the namespace is resolved first, not adding a row.
+     */
     private static final Set<Permission> POLICY = Set.of(
         // DEPLOYER — workload management
         Permission.of(RiggerRole.DEPLOYER, "apply",  "Deployment"),
@@ -35,8 +49,6 @@ public class RbacPolicyEngine {
         Permission.of(RiggerRole.DEPLOYER, "get",    "ConfigMap"),
         Permission.of(RiggerRole.DEPLOYER, "get",    "Secret"),
         Permission.of(RiggerRole.DEPLOYER, "get",    "Pod"),
-        Permission.of(RiggerRole.DEPLOYER, "get",    "Node"),
-        Permission.of(RiggerRole.DEPLOYER, "get",    "GitOps"),
         Permission.of(RiggerRole.DEPLOYER, "logs",   "Pod"),
         // VIEWER — read only
         Permission.of(RiggerRole.VIEWER, "get",  "Deployment"),
@@ -44,8 +56,6 @@ public class RbacPolicyEngine {
         Permission.of(RiggerRole.VIEWER, "get",  "ConfigMap"),
         Permission.of(RiggerRole.VIEWER, "get",  "Secret"),
         Permission.of(RiggerRole.VIEWER, "get",  "Pod"),
-        Permission.of(RiggerRole.VIEWER, "get",  "Node"),
-        Permission.of(RiggerRole.VIEWER, "get",  "GitOps"),
         Permission.of(RiggerRole.VIEWER, "logs", "Pod"),
         // GITOPS_AGENT — apply only
         Permission.of(RiggerRole.GITOPS_AGENT, "apply", "Deployment"),
@@ -58,11 +68,17 @@ public class RbacPolicyEngine {
      * Operations only CLUSTER_ADMIN can perform. These are enforced by <em>absence</em> from
      * {@link #POLICY} (every other role falls through to a denial), so they have to be listed
      * separately for {@link #permissionsFor} to describe an admin's capabilities accurately.
-     * Keep in sync with the controllers that call {@code authorize} with these pairs.
+     * Keep in sync with the controllers that call {@code authorize} with these pairs — the resource
+     * string is matched literally, so a controller saying {@code "AuditLog"} while this table says
+     * {@code "Audit"} produces a permission the console is told about and a check that can never
+     * consult it (harmless only for as long as CLUSTER_ADMIN keeps bypassing the table).
      */
     private static final Map<String, Set<String>> ADMIN_ONLY = Map.of(
         "Cluster", Set.of("get", "up", "sync"),
-        "GitOps",  Set.of("configure"),
+        // Node and GitOps reads live here, not in POLICY: their endpoints are cluster-scoped, so
+        // the namespace gate in authorize() already restricts them to CLUSTER_ADMIN.
+        "Node",    Set.of("get"),
+        "GitOps",  Set.of("get", "configure"),
         "User",    Set.of("get", "create", "delete"),
         "Audit",   Set.of("get")
     );

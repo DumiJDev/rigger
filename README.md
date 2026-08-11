@@ -68,6 +68,10 @@ riggerctl whoami
 
 # 5. Aplicar o primeiro manifest
 riggerctl apply -f examples/deployment-sample.yaml -n default --insecure
+
+# 6. Ou aplicar a aplicação de exemplo completa (ConfigMap + Secret + Deployment + Services)
+riggerctl apply -f examples/gitops/ -n demo --dry-run --insecure   # validar primeiro
+riggerctl apply -f examples/gitops/ -n demo --insecure
 ```
 
 Abrir a UI: https://localhost:7433/ui
@@ -313,6 +317,13 @@ riggerctl user revoke alice
 
 ## 8. Manifests YAML
 
+> Todos os exemplos desta secção existem como ficheiros aplicáveis em
+> [`examples/`](examples/) — uma aplicação completa (ConfigMap, Secret, Deployment com
+> autoscaling, Service ClusterIP e LoadBalancer) em [`examples/gitops/`](examples/gitops/) e um
+> manifest de cluster em [`examples/cluster/`](examples/cluster/). São aplicados e verificados
+> contra um Swarm real, pelo que valem mais do que os fragmentos abaixo. Ver
+> [`examples/README.md`](examples/README.md) para os erros mais comuns e as limitações actuais.
+
 ### Deployment com HPA
 
 ```yaml
@@ -328,6 +339,11 @@ spec:
   replicas: 3
   image: myregistry/payments:1.4.2
   env:
+    # Valores literais são passados ao contentor tal como estão
+    - name: APP_ENV
+      value: "production"
+    # `valueFrom` é validado e aparece na topologia da consola, mas ainda NÃO é injectado no
+    # contentor pelo adaptador de Swarm — usar valores literais ou configMapRefs para já
     - name: DB_URL
       valueFrom:
         configMapKeyRef:
@@ -338,14 +354,17 @@ spec:
         secretKeyRef:
           name: payments-secrets
           key: db.password
+  # ResourceRequirements é PLANO — não usar o formato aninhado limits/requests do Kubernetes
   resources:
-    limits:
-      cpu: "0.5"
-      memory: "512Mi"
+    cpuLimit:       "0.5"
+    memoryLimit:    "512Mi"
+    cpuReserved:    "0.1"
+    memoryReserved: "128Mi"
+  # A estratégia de rollout NÃO tem campo `type` — rolling update é a única implementada
   strategy:
-    type: RollingUpdate
     maxUnavailable: 1
     delaySeconds: 10
+    failureAction: PAUSE      # PAUSE | ROLLBACK | CONTINUE
   hpa:
     minReplicas: 2
     maxReplicas: 10
@@ -494,6 +513,23 @@ O agente faz poll a cada 60 segundos (configurável).
 Quando detecta um novo commit, aplica todos os manifests modificados.
 O agente tem role `gitops-agent` — só pode fazer `apply`, não pode `delete` nem gerir utilizadores.
 
+Detalhes que determinam a estrutura do repositório de manifests:
+
+- A descoberta de ficheiros **não é recursiva** — só os `*.yaml`/`*.yml` directamente dentro de
+  cada `manifestPaths` são lidos. Subdirectórios são ignorados a menos que sejam listados como
+  paths próprios.
+- Os ficheiros são aplicados por **ordem alfabética** do nome, daí o prefixo numérico nos
+  exemplos (ConfigMap e Secret antes do Deployment que os referencia).
+- O directório sob poll só pode conter manifests de workload. `kind: Cluster` não é um workload
+  e **um único ficheiro inválido aborta o ciclo de sync inteiro** — manter o
+  `rigger.cluster.yaml` fora dos paths sob poll.
+- `namespaceMapping` só serve de fallback para manifests sem namespace; como
+  `metadata.namespace` é obrigatório, o valor do ficheiro ganha sempre.
+
+[`examples/gitops/`](examples/gitops/) está organizado exactamente com esta disposição — pode
+ser usado como o path de manifests de um repositório GitOps sem alterações. Ver
+[`examples/README.md`](examples/README.md).
+
 ---
 
 ## 12. Variáveis de ambiente
@@ -504,8 +540,8 @@ O agente tem role `gitops-agent` — só pode fazer `apply`, não pode `delete` 
 | `RIGGER_JWT_KEY` | Produção | (insegura) | Chave de assinatura JWT. `openssl rand -base64 32` |
 | `TLS_KEYSTORE_PATH` | Produção | classpath dev cert | Caminho para o keystore PKCS12 |
 | `TLS_KEYSTORE_PASSWORD` | Produção | `rigger-dev` | Password do keystore |
-| `DOCKER_SOCKET` | Não | `/var/run/docker.sock` | Socket do Docker. Em Windows: `npipe:////./pipe/docker_engine` |
-| `DOCKER_HOST` | Não | — | Docker remoto TCP, ex: `tcp://10.0.0.10:2375` |
+| `DOCKER_SOCKET` | Não | `/var/run/docker.sock` (Linux) · `npipe:////./pipe/docker_engine` (Windows) | Socket do Docker. Em Windows o perfil `windows` já usa o named pipe por omissão — define esta variável só para apontar para outro pipe (por exemplo `npipe:////./pipe/dockerDesktopLinuxEngine`, que `docker context inspect` mostra). Aceita a forma `\\.\pipe\...` com barras invertidas. |
+| `DOCKER_HOST` | Não | — | Daemon remoto (`tcp://host:2375`). Tem prioridade sobre `DOCKER_SOCKET`. Para um daemon com TLS define também `rigger.docker.tlsCertPath`, um directório com `ca.pem`/`cert.pem`/`key.pem`. |
 | `RIGGER_ATTACH_EXISTING_SWARM` | Não | `false` | `true` para ligar a um Swarm já existente (sem provisionar) |
 | `RIGGER_DB_PATH` | Não | `./rigger-state.db` | Caminho para o ficheiro SQLite |
 | `RIGGER_ADMIN_NAME` | Não | `admin` | Nome do utilizador administrador de bootstrap |

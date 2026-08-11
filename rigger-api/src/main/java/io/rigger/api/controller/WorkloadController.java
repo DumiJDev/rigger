@@ -78,6 +78,7 @@ public class WorkloadController {
     public ResponseEntity<Map<String, Object>> apply(
             @PathVariable String namespace,
             @RequestBody ApplyRequest req,
+            @RequestParam(defaultValue = "false") boolean force,
             HttpServletRequest httpReq) throws Exception {
 
         var ctx = ctx(httpReq, namespace);
@@ -87,9 +88,29 @@ public class WorkloadController {
         // of this method doesn't care which format arrived. Detection is content-based: a Compose
         // file has a top-level services map and no apiVersion/kind.
         boolean isCompose = composeConverter.isCompose(req.manifest());
-        var parsed = isCompose
-            ? composeConverter.convertString(req.manifest(), namespace, "compose")
-            : parser.parseString(req.manifest(), "api");
+        List<ParsedManifest> parsed;
+        List<ComposeConverter.Issue> composeIssues = List.of();
+        if (isCompose) {
+            var conversion = composeConverter.convertString(req.manifest(), namespace, "compose");
+            composeIssues = conversion.issues();
+            // Applying a Compose file used to succeed while quietly discarding volumes, command,
+            // healthcheck and more — the caller was told "created" about a Deployment that ran a
+            // different process with none of its data. An ERROR-level issue means exactly that
+            // class of loss, so it stops the apply and names every offending path. `force=true` is
+            // the deliberate override; there is no implicit one.
+            if (conversion.hasErrors() && !force) {
+                var violations = new ArrayList<String>();
+                conversion.errors().forEach(i -> violations.add(i.path() + ": " + i.message()));
+                violations.add("Use POST /convert (or `riggerctl convert -f <file>`) to see the "
+                    + "generated rigger.io/v1 YAML and fix these, or repeat this request with "
+                    + "?force=true to apply anyway, accepting the loss.");
+                throw new ManifestValidationException(violations);
+            }
+            composeIssues.forEach(i -> log.warn("compose conversion {}", i));
+            parsed = conversion.manifests();
+        } else {
+            parsed = parser.parseString(req.manifest(), "api");
+        }
         var results = new ArrayList<Map<String, Object>>();
 
         for (var pm : parsed) {
@@ -104,6 +125,9 @@ public class WorkloadController {
             Object spec = manifest.spec();
             if ("Secret".equals(manifest.kind()) && spec instanceof SecretSpec secretSpec) {
                 spec = encryptSecretData(secretSpec);
+            }
+            if (spec instanceof ServiceSpec serviceSpec && serviceSpec.ingress() != null) {
+                rejectIfHostClaimed(namespace, manifest.metadata().name(), serviceSpec.ingress().host());
             }
 
             String specJson  = mapper.writeValueAsString(spec);
@@ -138,7 +162,60 @@ public class WorkloadController {
                 "namespace", namespace,
                 "action", req.dryRun() ? "validated" : exists ? "updated" : "created"));
         }
-        return ResponseEntity.ok(Map.of("applied", results.size(), "resources", results));
+        var body = new LinkedHashMap<String, Object>();
+        body.put("applied", results.size());
+        body.put("resources", results);
+        // Only present for Compose input, and only when something was lost — a caller that sees the
+        // key knows the answer isn't the whole story.
+        if (!composeIssues.isEmpty()) {
+            body.put("composeIssues", composeIssues.stream()
+                .map(ConvertResponse.ComposeIssue::from).toList());
+        }
+        return ResponseEntity.ok(body);
+    }
+
+    // ── Convert ────────────────────────────────────────────────────────────
+
+    /**
+     * Translates docker-compose input to {@code rigger.io/v1} YAML and reports everything that could
+     * not be carried across. <strong>Persists nothing</strong> and touches neither Swarm nor the
+     * store — it is a pure function of the body.
+     *
+     * <p>RBAC: {@code get}/{@code Deployment}, not {@code apply}. Converting is not applying: the
+     * response is derived entirely from input the caller already holds, reveals nothing about the
+     * cluster, and changes nothing in it. Requiring {@code apply} would mean a VIEWER could not
+     * inspect what a Compose file <em>would</em> become — which is precisely the review step this
+     * endpoint exists for. The {@code get}/{@code Deployment} pair still forces authentication and
+     * still runs the namespace-scope gate in {@link RbacPolicyEngine#authorize}, so a scoped
+     * identity cannot convert into someone else's namespace (the namespace is stamped into the
+     * generated manifests, so it is not a neutral parameter). It needs no new policy row: DEPLOYER
+     * and VIEWER already have it, and GITOPS_AGENT — which applies through the trusted internal path
+     * and never previews — deliberately does not.
+     */
+    @PostMapping("/convert")
+    public ResponseEntity<ConvertResponse> convert(
+            @PathVariable String namespace,
+            @RequestBody ConvertRequest req,
+            HttpServletRequest httpReq) throws Exception {
+
+        var ctx = ctx(httpReq, namespace);
+        rbac.authorize(ctx, "get", "Deployment");
+
+        String content = req.content();
+        if (content == null || content.isBlank()) {
+            throw new InvalidRequestException("content: docker-compose YAML must not be empty");
+        }
+        if (!composeConverter.isCompose(content)) {
+            // Distinguishable from "converted to nothing": a rigger.io/v1 manifest needs no
+            // conversion, and saying so is more useful than returning an empty result.
+            throw new InvalidRequestException(
+                "content: not a docker-compose document (expected a top-level 'services' map and no "
+                + "apiVersion/kind). A rigger.io/v1 manifest needs no conversion — apply it directly.");
+        }
+
+        var conversion = composeConverter.convertString(content, namespace, "convert");
+        return ResponseEntity.ok(
+            ConvertResponse.from(composeConverter.toYaml(conversion.manifests()), conversion));
     }
 
     // ── List ───────────────────────────────────────────────────────────────
@@ -440,6 +517,41 @@ public class WorkloadController {
     }
 
     /** Encrypts every value in a Secret's data map. Never called on read paths. */
+    /**
+     * Refuses an ingress host already claimed by a Service in another namespace.
+     *
+     * <p>Ingress hosts are cluster-wide while RBAC is namespaced, so without this a DEPLOYER scoped
+     * to one namespace could claim another team's hostname with an ordinary apply and Traefik would
+     * pick a router non-deterministically — a cross-namespace traffic hijack needing no extra
+     * privilege. {@code ServiceBindingResolver} also defends at reconcile time by letting the
+     * lowest-sorting claim win, but that only takes effect after the apply has already succeeded;
+     * telling the caller no is the better answer.
+     *
+     * <p>Deliberately a plain store query and deliberately NOT routed through RBAC: a caller has to
+     * be told the host is taken, and by whom, without being granted read access to the namespace
+     * that holds it.
+     */
+    private void rejectIfHostClaimed(String namespace, String name, String host) {
+        for (var other : store.findAllByKind("Service")) {
+            if (other.getNamespace().equals(namespace) && other.getName().equals(name)) continue;
+            try {
+                var otherSpec = mapper.readValue(other.getSpecJson(), ServiceSpec.class);
+                if (otherSpec.ingress() != null && host.equals(otherSpec.ingress().host())) {
+                    throw new ManifestValidationException(List.of(
+                        "spec.ingress.host '" + host + "' is already claimed by Service "
+                            + other.getNamespace() + "/" + other.getName()
+                            + " — ingress hosts are cluster-wide, not namespaced"));
+                }
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                // An unreadable stored spec cannot be compared. Skipping it is right here: refusing
+                // every apply because some unrelated row is corrupt would be worse, and
+                // ServiceBindingResolver warns about it on the reconcile path.
+                log.debug("Skipping unreadable Service spec {}/{} during ingress host check: {}",
+                    other.getNamespace(), other.getName(), e.getMessage());
+            }
+        }
+    }
+
     private SecretSpec encryptSecretData(SecretSpec spec) {
         if (spec.data() == null || spec.data().isEmpty()) return spec;
         var encrypted = new LinkedHashMap<String, String>();

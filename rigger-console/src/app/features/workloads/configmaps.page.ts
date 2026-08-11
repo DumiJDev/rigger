@@ -3,39 +3,54 @@ import { TranslocoDirective } from '@jsverse/transloco';
 import { Observable } from 'rxjs';
 import { ResourceResponse } from '../../core/api.models';
 import { DataState } from '../../shared/data-state';
+import { ListToolbar } from '../../shared/list-toolbar';
 import { PageHeader } from '../../shared/page-header';
+import { DetailDrawer } from '../../shared/detail-drawer';
+import { RowAction, RowMenu } from '../../shared/row-menu';
 import { ResourceListPage } from './resource-page.base';
 
 @Component({
   selector: 'r-configmaps',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoDirective, PageHeader, DataState],
+  imports: [TranslocoDirective, PageHeader, DataState, ListToolbar, RowMenu, DetailDrawer],
   template: `
     <ng-container *transloco="let t">
       <r-page-header [title]="t('configmaps.title')" [subtitle]="t('configmaps.subtitle')">
-        <button type="button" class="btn btn-ghost" (click)="load()">{{ t('common.refresh') }}</button>
       </r-page-header>
+
+      <r-list-toolbar
+        [(query)]="query"
+        [total]="items().length"
+        [shown]="visible().length"
+        [placeholder]="t('configmaps.search')"
+      />
 
       <r-data-state
         [loading]="loading()"
         [error]="error() ? t(error()!) : null"
-        [empty]="!items().length"
-        [emptyMessage]="t('configmaps.empty')"
+        [empty]="!visible().length"
+        [emptyMessage]="filteredOut() ? t('common.noMatches') : t('configmaps.empty')"
         (retry)="load()"
       >
         <div class="surface table-wrap">
           <table class="data">
             <thead>
               <tr>
-                <th>{{ t('common.name') }}</th>
-                <th>{{ t('configmaps.keys') }}</th>
-                <th>{{ t('common.appliedBy') }}</th>
-                <th class="text-right">{{ t('common.actions') }}</th>
+                <th class="sortable" [attr.aria-sort]="ariaSort('name')" (click)="sortBy('name')">
+                  {{ t('common.name') }}
+                </th>
+                <th class="sortable" [attr.aria-sort]="ariaSort('keys')" (click)="sortBy('keys')">
+                  {{ t('configmaps.keys') }}
+                </th>
+                <th class="sortable" [attr.aria-sort]="ariaSort('appliedBy')" (click)="sortBy('appliedBy')">
+                  {{ t('common.appliedBy') }}
+                </th>
+                <th class="w-10"><span class="sr-only">{{ t('common.actions') }}</span></th>
               </tr>
             </thead>
             <tbody>
-              @for (item of items(); track item.name) {
-                <tr>
+              @for (item of visible(); track item.name) {
+                <tr class="clickable" (click)="openDetails(item)">
                   <td class="font-medium">{{ item.name }}</td>
                   <td>
                     <div class="flex flex-wrap gap-1">
@@ -51,19 +66,12 @@ import { ResourceListPage } from './resource-page.base';
                     </div>
                   </td>
                   <td class="muted">{{ item.appliedBy || '—' }}</td>
-                  <td>
-                    <div class="flex justify-end">
-                      @if (canDelete()) {
-                        <button
-                          type="button"
-                          class="btn btn-danger py-1"
-                          [disabled]="busyItem() === item.name"
-                          (click)="confirming.set(item.name)"
-                        >
-                          {{ t('common.delete') }}
-                        </button>
-                      }
-                    </div>
+                  <td class="text-right">
+                    <r-row-menu
+                      [actions]="actionsFor()"
+                      [disabled]="busyItem() === item.name"
+                      (selected)="onAction($event, item)"
+                    />
                   </td>
                 </tr>
               }
@@ -87,6 +95,9 @@ import { ResourceListPage } from './resource-page.base';
           </div>
         </div>
       }
+      @if (viewing(); as item) {
+        <r-detail-drawer [resource]="item" (closed)="viewing.set(null)" />
+      }
     </ng-container>
   `,
 })
@@ -102,6 +113,29 @@ export class ConfigMapsPage extends ResourceListPage {
 
   protected fetch(namespace: string): Observable<ResourceResponse[]> {
     return this.api.configMaps(namespace);
+  }
+
+  protected override searchText(item: ResourceResponse): string {
+    return `${super.searchText(item)} ${this.keys(item).join(' ')}`;
+  }
+
+  protected override sortValue(item: ResourceResponse, key: string): string | number | undefined {
+    // By key count, not by the joined key names: "how much is in here" is the useful ordering.
+    return key === 'keys' ? this.keys(item).length : super.sortValue(item, key);
+  }
+
+  /** Details, plus delete when allowed — the only mutation these kinds support today. */
+  actionsFor(): RowAction[] {
+    const actions: RowAction[] = [this.detailsAction];
+    if (this.canDelete()) {
+      actions.push({ id: 'delete', labelKey: 'common.delete', icon: 'trash', danger: true });
+    }
+    return actions;
+  }
+
+  onAction(id: string, item: ResourceResponse): void {
+    if (id === 'details') this.openDetails(item);
+    if (id === 'delete') this.confirming.set(item.name);
   }
 
   /** Key names only — values are shown on purpose nowhere, to keep parity with Secrets. */

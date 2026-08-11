@@ -1,36 +1,37 @@
 package io.rigger.operator.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.dockerjava.api.model.EndpointSpec;
-import com.github.dockerjava.api.model.PortConfig;
-import com.github.dockerjava.api.model.PortConfigProtocol;
 import io.rigger.core.domain.resource.*;
 import io.rigger.store.entity.ResourceEntity;
 import io.rigger.store.repository.ResourceRepository;
-import io.rigger.swarm.adapter.ServiceAdapter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 /**
- * Reconciles Rigger Service resources — MVP.
+ * Observes Rigger Service resources. <strong>Writes nothing.</strong>
  *
- * <p>A Rigger Service doesn't own a Swarm object of its own: it resolves the target Deployment
- * by selector match, then adjusts that Deployment's underlying Swarm service published ports
- * (via {@link EndpointSpec}) to match {@link ServiceSpec#ports()}.
+ * <p>A Rigger Service owns no Swarm object of its own: it describes how a Deployment's Swarm service
+ * should be exposed — published ports, and optionally a Traefik ingress. Both are now produced inside
+ * {@code ServiceAdapter.buildServiceSpec()} from the {@link ServiceBinding} that
+ * {@link ServiceBindingResolver} resolves for each Deployment, and applied by
+ * {@code DeploymentController}.
+ *
+ * <p><strong>Why this controller stopped writing.</strong> It used to call
+ * {@code ServiceAdapter.updatePublishedPorts()}, which re-sent a whole spec it had read earlier —
+ * concurrently with {@code DeploymentController} rewriting the same service on another virtual
+ * thread. Whichever finished last won, so ports (and later, Traefik labels and the ingress network
+ * attachment) vanished at random and the two writers re-raced every 15 seconds. The version index of
+ * an idle Swarm service climbed by the second. There is now exactly one writer per Swarm service.
  *
  * <ul>
- *   <li>{@code ClusterIP} — no-op. Swarm's overlay network already gives every service
- *       DNS-resolvable internal access by name; there's nothing extra to reconcile.</li>
- *   <li>{@code LoadBalancer} — publishes the declared ports on the Swarm service (ingress mode,
- *       routed to every node).</li>
+ *   <li>{@code ClusterIP} — nothing to do at all; Swarm's overlay DNS already resolves service names
+ *       inside the cluster.</li>
+ *   <li>{@code LoadBalancer} — reported here only: a Service whose selector matches no Deployment
+ *       used to be silently invisible, which reads as "ingress is broken" rather than "the selector
+ *       is wrong".</li>
  * </ul>
- *
- * <p>Full ingress-controller-grade routing (path-based routing, TLS termination, virtual hosts)
- * is out of scope — see CLAUDE.md.
  */
 @Component
 public class ServiceController {
@@ -38,91 +39,46 @@ public class ServiceController {
     private static final Logger log = LoggerFactory.getLogger(ServiceController.class);
 
     private final ResourceRepository store;
-    private final ServiceAdapter     swarm;
     private final ObjectMapper       mapper = new ObjectMapper();
 
-    public ServiceController(ResourceRepository store, ServiceAdapter swarm) {
+    public ServiceController(ResourceRepository store) {
         this.store = store;
-        this.swarm = swarm;
     }
 
+    /** @return always 0 — this controller makes no changes. */
     public int reconcile() {
-        var desired = store.findAllByKind("Service");
-        if (desired.isEmpty()) return 0;
-
-        int changes = 0;
-        for (var entity : desired) {
+        for (var entity : store.findAllByKind("Service")) {
             try {
-                if (reconcileOne(entity)) changes++;
+                warnIfUnbound(entity);
             } catch (Exception e) {
-                log.error("Failed to reconcile Service {}/{}: {}",
+                log.error("Failed to inspect Service {}/{}: {}",
                     entity.getNamespace(), entity.getName(), e.getMessage());
             }
         }
-        return changes;
+        return 0;
     }
 
-    private boolean reconcileOne(ResourceEntity entity) throws Exception {
+    private void warnIfUnbound(ResourceEntity entity) throws Exception {
         var spec = mapper.readValue(entity.getSpecJson(), ServiceSpec.class);
-        if (spec.type() != ServiceType.LOAD_BALANCER) {
-            // ClusterIP: Swarm's overlay network DNS already covers this — nothing to do.
-            return false;
-        }
-
-        String deploymentName = resolveDeploymentName(entity.getNamespace(), spec.selector());
-        if (deploymentName == null) {
-            log.debug("Service {}/{}: no Deployment matches selector {}",
+        if (spec.type() != ServiceType.LOAD_BALANCER) return;
+        if (matchingDeployment(entity.getNamespace(), spec.selector())) return;
+        log.warn("Service {}/{} selects nothing: no Deployment in this namespace has a selector "
+               + "matching {} — its ports are not published and any ingress is not routed.",
                 entity.getNamespace(), entity.getName(), spec.selector());
-            return false;
-        }
-
-        var svc = swarm.find(entity.getNamespace(), deploymentName);
-        if (svc.isEmpty()) return false; // Deployment not yet reconciled onto Swarm — wait for it
-
-        var desiredPorts = spec.ports().stream()
-            .map(p -> new PortConfig()
-                .withTargetPort(p.targetPort())
-                .withPublishedPort(p.port())
-                .withProtocol(PortConfigProtocol.valueOf(p.protocol().toUpperCase()))
-                .withPublishMode(PortConfig.PublishMode.ingress))
-            .toList();
-
-        var currentPorts = svc.get().getSpec() != null && svc.get().getSpec().getEndpointSpec() != null
-            ? svc.get().getSpec().getEndpointSpec().getPorts() : null;
-
-        if (portsMatch(currentPorts, desiredPorts)) return false;
-
-        swarm.updatePublishedPorts(svc.get(), desiredPorts);
-        log.info("Service {}/{}: published ports on Deployment {} -> {}",
-            entity.getNamespace(), entity.getName(), deploymentName, desiredPorts.size());
-        return true;
     }
 
-    /** Finds a Deployment in the namespace whose selector is a superset of the Service's. */
-    private String resolveDeploymentName(String namespace, Map<String, String> serviceSelector) {
+    private boolean matchingDeployment(String namespace, Map<String, String> serviceSelector) {
         for (var deployment : store.findByKindAndNamespace("Deployment", namespace)) {
             try {
                 var depSpec = mapper.readValue(deployment.getSpecJson(), DeploymentSpec.class);
-                if (depSpec.selector() != null && depSpec.selector().entrySet().containsAll(serviceSelector.entrySet())) {
-                    return deployment.getName();
+                if (depSpec.selector() != null
+                        && depSpec.selector().entrySet().containsAll(serviceSelector.entrySet())) {
+                    return true;
                 }
             } catch (Exception ignored) {
                 // Not a Deployment we can parse — skip.
             }
         }
-        return null;
-    }
-
-    private boolean portsMatch(List<PortConfig> current, List<PortConfig> desired) {
-        if (current == null) return desired.isEmpty();
-        if (current.size() != desired.size()) return false;
-        for (var d : desired) {
-            boolean found = current.stream().anyMatch(c ->
-                c.getTargetPort() == d.getTargetPort()
-                    && Objects.equals(c.getPublishedPort(), d.getPublishedPort())
-                    && c.getProtocol() == d.getProtocol());
-            if (!found) return false;
-        }
-        return true;
+        return false;
     }
 }

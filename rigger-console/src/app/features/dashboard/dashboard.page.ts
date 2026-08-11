@@ -1,25 +1,48 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { TranslocoDirective } from '@jsverse/transloco';
-import { firstValueFrom } from 'rxjs';
+import { Observable, catchError, firstValueFrom, of } from 'rxjs';
 import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
-import { ClusterMetrics, EventResponse, Topology } from '../../core/api.models';
+import {
+  ClusterMetricName, ClusterMetrics, EventResponse, MetricSeries, Topology,
+} from '../../core/api.models';
 import { NamespaceService } from '../../core/namespace.service';
+import { RefreshService } from '../../core/refresh.service';
 import { DataState } from '../../shared/data-state';
+import { Icon } from '../../shared/icon';
+import { ChartSeries, LineChart } from '../../shared/line-chart';
 import { PageHeader } from '../../shared/page-header';
+import { Sparkline } from '../../shared/sparkline';
 import { StatusBadge } from '../../shared/status-badge';
+
+/** Window charted on this page. An hour is short enough to still show a shape at 30s sampling. */
+const WINDOW_MINUTES = 60;
+
+/** Deployments charted at once. Beyond this the legend is longer than the chart. */
+const MAX_CHARTED_DEPLOYMENTS = 6;
+
+/** The cluster series each KPI panel plots beneath its number. */
+const KPI_SERIES: ClusterMetricName[] = [
+  'nodes.active',
+  'replicas.running',
+  'resources.deployments',
+];
 
 @Component({
   selector: 'r-dashboard',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoDirective, PageHeader, DataState, StatusBadge, RouterLink, DatePipe],
+  imports: [
+    TranslocoDirective, PageHeader, DataState, StatusBadge, RouterLink, DatePipe,
+    Sparkline, LineChart, Icon,
+  ],
   templateUrl: './dashboard.page.html',
 })
 export class DashboardPage {
   private readonly api = inject(ApiService);
   private readonly ns = inject(NamespaceService);
+  private readonly refresh = inject(RefreshService);
   readonly auth = inject(AuthService);
 
   readonly loading = signal(true);
@@ -28,10 +51,70 @@ export class DashboardPage {
   readonly topology = signal<Topology | null>(null);
   readonly events = signal<EventResponse[]>([]);
 
+  /** Keyed by metric name; absent or short means the sparkline renders its empty state. */
+  readonly history = signal<Record<string, [number, number][]>>({});
+  readonly cpuSeries = signal<ChartSeries[]>([]);
+
+  /**
+   * The same KPI numbers for a caller who cannot read cluster metrics, derived from the namespace
+   * topology (which any role that can `get Deployment` may read).
+   *
+   * <p>Scoped to one namespace rather than the cluster, which is exactly what a namespace-scoped
+   * identity should see. Node counts have no namespaced equivalent, so that panel is simply not
+   * rendered — a zero there would read as "the cluster is down" rather than "you can't see this".
+   */
+  readonly namespaceSummary = computed(() => {
+    const nodes = this.topology()?.nodes ?? [];
+    const count = (kind: string) => nodes.filter((n) => n.kind === kind).length;
+    const deployments = nodes.filter((n) => n.kind === 'Deployment');
+    const sum = (pick: (n: (typeof deployments)[number]) => number | null) =>
+      deployments.reduce((total, n) => total + (pick(n) ?? 0), 0);
+    const services = count('Service');
+    const configMaps = count('ConfigMap');
+    const secrets = count('Secret');
+    return {
+      deployments: deployments.length,
+      services,
+      configMaps,
+      secrets,
+      resources: services + configMaps + secrets,
+      running: sum((n) => n.runningReplicas),
+      desired: sum((n) => n.desiredReplicas),
+    };
+  });
+
+  readonly health = computed(() => {
+    const nodes = this.topology()?.nodes.filter((n) => n.kind === 'Deployment') ?? [];
+    const of_ = (h: string) => nodes.filter((n) => n.health === h).length;
+    return {
+      total: nodes.length,
+      healthy: of_('healthy'),
+      degraded: of_('degraded'),
+      down: of_('down'),
+      unknown: of_('unknown'),
+    };
+  });
+
+  /** Rows for the health panel: only states that actually occur, so an empty row is never drawn. */
+  readonly healthRows = computed(() => {
+    const h = this.health();
+    return (
+      [
+        { key: 'healthy', count: h.healthy },
+        { key: 'degraded', count: h.degraded },
+        { key: 'down', count: h.down },
+        { key: 'unknown', count: h.unknown },
+      ] as const
+    )
+      .filter((r) => r.count > 0)
+      .map((r) => ({ ...r, percent: h.total ? (r.count / h.total) * 100 : 0 }));
+  });
+
   constructor() {
     // Reloads whenever the namespace changes — the workload half of this page is namespaced.
     effect(() => {
       const namespace = this.ns.current();
+      this.refresh.tick();
       void this.load(namespace);
     });
   }
@@ -44,18 +127,18 @@ export class DashboardPage {
       // rather than an error, so that call is allowed to fail on its own.
       const [topology, events] = await Promise.all([
         firstValueFrom(this.api.topology(namespace)),
-        firstValueFrom(this.api.events(undefined, 0, 8)),
+        firstValueFrom(this.api.events(undefined, 0, 12)),
       ]);
       this.topology.set(topology);
       this.events.set(events.content);
 
       if (this.auth.isClusterAdmin()) {
-        try {
-          this.metrics.set(await firstValueFrom(this.api.clusterMetrics()));
-        } catch {
-          this.metrics.set(null);
-        }
+        this.metrics.set(await this.optional(this.api.clusterMetrics()));
+        await this.loadClusterHistory();
+      } else {
+        await this.loadNamespaceHistory(namespace);
       }
+      await this.loadCpuHistory(namespace);
     } catch (e) {
       this.error.set(describe(e));
     } finally {
@@ -63,15 +146,109 @@ export class DashboardPage {
     }
   }
 
-  healthCounts(): { healthy: number; degraded: number; down: number; unknown: number } {
-    const nodes = this.topology()?.nodes.filter((n) => n.kind === 'Deployment') ?? [];
-    return {
-      healthy: nodes.filter((n) => n.health === 'healthy').length,
-      degraded: nodes.filter((n) => n.health === 'degraded').length,
-      down: nodes.filter((n) => n.health === 'down').length,
-      unknown: nodes.filter((n) => n.health === 'unknown').length,
-    };
+  /**
+   * Charts are supplementary: a page that renders its numbers but 403s or errors on a series must
+   * still render. So every history call goes through {@link optional} and a missing series simply
+   * leaves the sparkline in its empty state.
+   */
+  private async loadClusterHistory(): Promise<void> {
+    const results = await Promise.all(
+      KPI_SERIES.map((metric) =>
+        this.optional(this.api.metricSeries(metric, { minutes: WINDOW_MINUTES })),
+      ),
+    );
+    const next: Record<string, [number, number][]> = {};
+    for (const series of results) {
+      if (series) next[series.metric] = toXy(series);
+    }
+    this.history.set(next);
   }
+
+  /**
+   * The replicas trend for a caller without cluster metrics, summed from the per-Deployment series
+   * they *are* allowed to read.
+   *
+   * <p>Every sample is written by one server-side scheduler in a single pass, so points from
+   * different Deployments share a timestamp — bucketing by timestamp gives a namespace total with
+   * no interpolation. Stored under the cluster series' key so the sparkline lookup is unchanged.
+   */
+  private async loadNamespaceHistory(namespace: string): Promise<void> {
+    const names = await this.optional(
+      this.api.metricSeriesNames(namespace, 'deployment.replicas.running', WINDOW_MINUTES),
+    );
+    if (!names?.length) {
+      this.history.set({});
+      return;
+    }
+    const series = await Promise.all(
+      names.map((name) =>
+        this.optional(
+          this.api.metricSeries('deployment.replicas.running', {
+            namespace, name, minutes: WINDOW_MINUTES,
+          }),
+        ),
+      ),
+    );
+    const totals = new Map<number, number>();
+    for (const s of series) {
+      for (const p of s?.points ?? []) {
+        const t = Date.parse(p.t);
+        totals.set(t, (totals.get(t) ?? 0) + p.v);
+      }
+    }
+    this.history.set({
+      'replicas.running': [...totals.entries()].sort((a, b) => a[0] - b[0]),
+    });
+  }
+
+  private async loadCpuHistory(namespace: string): Promise<void> {
+    // Ask which Deployments actually have samples rather than deriving names from the resource
+    // list — a Deployment applied a minute ago has no history yet and would chart as an empty line.
+    const names = await this.optional(
+      this.api.metricSeriesNames(namespace, 'deployment.cpu', WINDOW_MINUTES),
+    );
+    if (!names?.length) {
+      this.cpuSeries.set([]);
+      return;
+    }
+    const charted = names.slice(0, MAX_CHARTED_DEPLOYMENTS);
+    const series = await Promise.all(
+      charted.map((name) =>
+        this.optional(
+          this.api.metricSeries('deployment.cpu', { namespace, name, minutes: WINDOW_MINUTES }),
+        ),
+      ),
+    );
+    this.cpuSeries.set(
+      series
+        .filter((s): s is MetricSeries => s !== null)
+        .map((s) => ({ label: s.name, points: toXy(s) })),
+    );
+  }
+
+  /** Resolves to null instead of throwing, so one supplementary call cannot fail the whole page. */
+  private optional<T>(source: Observable<T>): Promise<T | null> {
+    return firstValueFrom(source.pipe(catchError(() => of(null))));
+  }
+
+  /**
+   * Green only when there are nodes and all of them are active. With no nodes at all the old
+   * expression (`active < total`) was false, so an empty cluster was painted green as though
+   * everything were fine — the one case where a colour must not reassure.
+   */
+  nodeColor(m: ClusterMetrics): string {
+    if (m.totalNodes === 0) return 'var(--text-faint)';
+    return m.activeNodes < m.totalNodes ? 'var(--color-warn)' : 'var(--color-ok)';
+  }
+
+  sparkline(metric: ClusterMetricName): [number, number][] {
+    return this.history()[metric] ?? [];
+  }
+}
+
+/** Server timestamps are ISO strings; the charts scale their x-axis by time, so parse once here. */
+function toXy(series: MetricSeries): [number, number][] {
+  return series.points.map((p) => [Date.parse(p.t), p.v]);
 }
 
 function describe(e: unknown): string {

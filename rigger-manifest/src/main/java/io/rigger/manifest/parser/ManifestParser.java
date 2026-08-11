@@ -77,7 +77,27 @@ public class ManifestParser {
         for (String doc : documents) {
             String trimmed = doc.trim();
             if (trimmed.isEmpty()) continue;
-            var root = (ObjectNode) yaml.readTree(trimmed);
+
+            ObjectNode root;
+            try {
+                var tree = yaml.readTree(trimmed);
+                if (!(tree instanceof ObjectNode obj)) {
+                    // A document that parses but isn't a mapping — a bare scalar or a list. The cast
+                    // used to do this and threw ClassCastException, which reached the client as a 500.
+                    throw new ManifestValidationException(List.of(
+                        "Document in " + sourceName + " is not a YAML mapping"));
+                }
+                root = obj;
+            } catch (com.fasterxml.jackson.core.JacksonException e) {
+                // Malformed YAML is the caller's mistake, not a server fault. Uncaught, snakeyaml's
+                // MarkedYAMLException escaped as a generic 500 with a correlation ID and a logged
+                // stack trace — so a manifest with a bad indent looked like Rigger had broken. The
+                // parser's own message names the line and column, which is exactly what the caller
+                // needs, and it is safe to return because it describes their input.
+                throw new ManifestValidationException(List.of(
+                    "Invalid YAML in " + sourceName + ": " + e.getOriginalMessage()));
+            }
+
             var manifest = parseDocument(root, sourceName, trimmed);
             validator.validate(manifest);
             results.add(manifest);

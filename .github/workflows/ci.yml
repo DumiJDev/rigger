@@ -13,6 +13,9 @@ concurrency:
 env:
   # Short and explicit so a failure is about the code, not about a weak default tripping a guard.
   RIGGER_ADMIN_PASSWORD: ci-admin-password
+  # Ingress is off by default (it binds 80/443 on the node). CI turns it on because the only thing
+  # that proves routing works is a real HTTP request through Traefik.
+  RIGGER_INGRESS_ENABLED: 'true'
   RIGGER_JWT_KEY: ci-jwt-signing-key-at-least-32-chars-long
 
 jobs:
@@ -106,8 +109,24 @@ jobs:
       - name: Stage jars
         run: |
           mkdir -p staging
-          cp rigger-server/target/rigger-server-1.0.0-SNAPSHOT.jar staging/rigger-server.jar
-          cp rigger-cli/target/riggerctl.jar staging/riggerctl.jar
+          if [ -f rigger-server/target/rigger-server-1.0.0-SNAPSHOT.jar ]; then
+            cp rigger-server/target/rigger-server-1.0.0-SNAPSHOT.jar staging/rigger-server.jar
+          else
+            echo "rigger-server jar not found in rigger-server/target/ — listing that directory:"
+            ls -la rigger-server/target || true
+            echo "Contents of repo root:"
+            ls -la || true
+            echo "Failing early to surface diagnostics"; exit 1
+          fi
+
+          if [ -f rigger-cli/target/riggerctl.jar ]; then
+            cp rigger-cli/target/riggerctl.jar staging/riggerctl.jar
+          else
+            echo "riggerctl jar not found in rigger-cli/target/ — listing that directory:"
+            ls -la rigger-cli/target || true
+            echo "Failing early to surface diagnostics"; exit 1
+          fi
+
           ls -l staging
 
       - uses: actions/upload-artifact@v7
@@ -166,6 +185,31 @@ jobs:
           done
           curl -sk https://localhost:7433/ui/i18n/pt.json | head -c 1 | grep -q '{' \
             || { echo "i18n did not return JSON"; fail=1; }
+
+          # The brand assets: a 404 here means the console renders a broken-image icon where its logo
+          # should be, and the tab shows the browser's placeholder.
+          for path in /ui/favicon.svg /ui/favicon-32.png /ui/brand/lockup-on-dark.svg /ui/brand/lockup-on-light.svg; do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' "https://localhost:7433$path")
+            echo "$path -> $code"
+            [ "$code" = "200" ] || fail=1
+          done
+
+          # A MISSING asset must 404, not fall back to the SPA shell. Both of this project's worst UI
+          # bugs were that fallback: first a blanket forward that recursed into a StackOverflowError,
+          # then an unconditional existence-based fallback that served index.html with 200 text/html
+          # for any absent file — which is how a missing i18n bundle rendered every page blank with
+          # nothing in the console. Route-shaped paths must still fall back, so both are asserted:
+          # each past bug passes the check for the other.
+          for path in /ui/favicon.ico /ui/nao-existe.png /ui/i18n/xx.json; do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' "https://localhost:7433$path")
+            echo "missing $path -> $code (expect 404)"
+            [ "$code" = "404" ] || { echo "  a missing asset fell back to the SPA shell"; fail=1; }
+          done
+          for path in /ui/deployments /ui/topology; do
+            ct=$(curl -sk -o /dev/null -w '%{content_type}' "https://localhost:7433$path")
+            echo "route $path -> $ct (expect html)"
+            case "$ct" in *html*) ;; *) echo "  a client-side route stopped serving the shell"; fail=1;; esac
+          done
           exit $fail
 
       - name: CLI flow (apply, pods, logs framing, delete)
@@ -222,15 +266,38 @@ jobs:
 
           $CLI apply -f /tmp/ci-manifests.yaml -n default -i
 
-          # Wait for reconciliation onto Swarm, then for a running task.
+          # Wait for THIS Deployment to reconcile onto Swarm, by name. Waiting for "any service with
+          # a running replica" broke the moment ingress was enabled in this job: the Traefik
+          # controller reports 1/1 within seconds, so the loop exited on its first iteration, ci-web
+          # had not reconciled yet, `get pods` was empty, and `riggerctl logs` then failed with a
+          # missing argument — three steps downstream of the actual problem.
           for i in $(seq 1 40); do
-            docker service ls --format '{{.Replicas}}' | grep -q '^[1-9]' && break
+            [ "$(docker service ls --filter name=rigger-default-ci-web --format '{{.Replicas}}')" = "1/1" ] && break
             sleep 5
           done
           docker service ls
+          docker service ls --filter name=rigger-default-ci-web --format '{{.Replicas}}' | grep -q '^1/1$' \
+            || { echo "ci-web never reconciled onto Swarm"; docker service ps rigger-default-ci-web --no-trunc || true; exit 1; }
 
           $CLI get pods -n default -i
-          POD=$($CLI get pods -n default -i | awk 'NR>2 {print $1; exit}')
+          # Skip the dashed separator explicitly. `NR>1 && NF` matched it — a line of dashes is one
+          # field — so $1 became "------…", and Picocli reads an argument starting with `--` as the
+          # end-of-options marker, which made <pod> vanish. The failure then read as "Missing required
+          # parameter: '<pod>'", three inferences away from a header line being parsed as data.
+          POD=$($CLI get pods -n default -i | awk 'NR>1 && NF && $1 !~ /^-+$/ {print $1; exit}')
+          echo "pod: ${POD:-<none>}"
+
+          if [ -z "$POD" ]; then
+            echo "No pods found in namespace default after apply; dumping diagnostics"
+            echo "--- deployments ---"
+            $CLI get deployments -n default -i || true
+            echo "--- services ---"
+            $CLI get services -n default -i || true
+            echo "--- docker service ls ---"
+            docker service ls || true
+            echo "--- end diagnostics ---"
+            exit 1
+          fi
 
           # riggerctl reads raw lines. When the two log framings shared one path, content
           # negotiation handed the CLI the SSE variant and it started printing "data:" prefixes.
@@ -286,6 +353,111 @@ jobs:
           echo "service version never stopped climbing; reconciliation is not converging"
           exit 1
 
+      # Wrong status codes are as much a defect as wrong data: a 500 tells the caller to retry and
+      # tells us to go read a stack trace, when in each of these cases the request was simply bad.
+      # All three returned 500 before they were mapped.
+      - name: API error contract
+        run: |
+          set -e
+          T=$(curl -sk -X POST https://localhost:7433/api/v1/auth/login \
+                -H 'Content-Type: application/json' \
+                -d "{\"username\":\"admin\",\"password\":\"$RIGGER_ADMIN_PASSWORD\"}" \
+              | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+          echo "$T" > /tmp/token
+          fail=0
+          check() { # description, expected, actual
+            printf '%-52s expected %s got %s\n' "$1" "$2" "$3"
+            [ "$2" = "$3" ] || fail=1
+          }
+          api() { curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $T" "$@"; }
+
+          check "unmapped URL is 404, not 500" 404 \
+            "$(api https://localhost:7433/api/v1/no-such-endpoint)"
+          check "malformed JSON body is 400, not 500" 400 \
+            "$(api -X POST https://localhost:7433/api/v1/namespaces/default/apply \
+                 -H 'Content-Type: application/json' -d '{not json')"
+          # dryRun is optional, but a plain boolean record component made omitting it a 500.
+          check "apply without dryRun succeeds" 200 \
+            "$(api -X POST https://localhost:7433/api/v1/namespaces/default/apply \
+                 -H 'Content-Type: application/json' \
+                 -d '{"manifest":"apiVersion: rigger.io/v1\nkind: ConfigMap\nmetadata:\n  name: ci-nodry\n  namespace: default\nspec:\n  data:\n    K: \"v\"\n"}')"
+          exit $fail
+
+      # Node reads used to come only from cluster_nodes, which just the SSH provisioning path writes.
+      # So an attached Swarm — the documented dev setup, and this job's setup — reported zero nodes
+      # on the Nodes page, the dashboard and the cluster status, while docker node ls showed a
+      # healthy leader. CI could not have caught it: its assertion was only "the nodes page renders".
+      - name: Cluster nodes come from Swarm, not just the provisioning table
+        run: |
+          set -e
+          T=$(cat /tmp/token)
+          fail=0
+          swarm_nodes=$(docker node ls --format '{{.Hostname}}' | wc -l)
+          api=$(curl -sk -H "Authorization: Bearer $T" https://localhost:7433/api/v1/cluster/nodes)
+          echo "swarm reports $swarm_nodes node(s); api returned: $api"
+          reported=$(printf '%s' "$api" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')
+          [ "$reported" = "$swarm_nodes" ] || { echo "api listed $reported of $swarm_nodes nodes"; fail=1; }
+          # A node listed but with an empty hostname or an OFFLINE status would still pass a count
+          # check, so each field the Nodes page shows is asserted on its own.
+          fields=$(printf '%s' "$api" | python3 -c 'import sys,json;n=json.load(sys.stdin)[0];print(bool(n["name"]),n["status"],n["role"],bool(n["swarmNodeId"]))')
+          echo "node fields: $fields"
+          [ "$fields" = "True ACTIVE MANAGER True" ] || { echo "node fields wrong"; fail=1; }
+          status=$(curl -sk -H "Authorization: Bearer $T" https://localhost:7433/api/v1/cluster \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["status"],d["activeNodes"],d["totalNodes"])')
+          echo "cluster status: $status"
+          [ "$status" = "healthy 1 1" ] || { echo "cluster reported '$status'"; fail=1; }
+          exit $fail
+
+      # The sampler is the only thing that makes the console's charts survive a reload, and it fails
+      # silently: an empty series and a broken sampler look identical from the outside.
+      - name: Metrics series is recorded and scoped
+        run: |
+          set -e
+          T=$(cat /tmp/token)
+          fail=0
+          series() {
+            curl -sk -H "Authorization: Bearer $T" \
+              "https://localhost:7433/api/v1/metrics/series?$1"
+          }
+          points=$(series 'metric=replicas.running&minutes=60' \
+            | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["points"]))')
+          echo "cluster series points: $points"
+          [ "$points" -ge 2 ] || { echo "sampler recorded no history"; fail=1; }
+
+          ordered=$(series 'metric=replicas.running&minutes=60' | python3 -c 'import sys,json;p=json.load(sys.stdin)["points"];print(all(a["t"]<=b["t"] for a,b in zip(p,p[1:])))')
+          echo "points ordered oldest-first: $ordered"
+          [ "$ordered" = "True" ] || { echo "series is not in plot order"; fail=1; }
+
+          dep=$(series 'metric=deployment.replicas.desired&namespace=default&name=ci-web&minutes=60' \
+            | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["points"]))')
+          echo "per-Deployment series points: $dep"
+          [ "$dep" -ge 1 ] || { echo "no per-Deployment samples"; fail=1; }
+
+          # A typo must not be indistinguishable from "no data yet".
+          code=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $T" \
+            'https://localhost:7433/api/v1/metrics/series?metric=cpu.bogus')
+          echo "unknown metric -> $code"
+          [ "$code" = "400" ] || fail=1
+
+          # A namespace-scoped identity may chart its own workloads but not the cluster.
+          curl -sk -X POST https://localhost:7433/api/v1/users -H "Authorization: Bearer $T" \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"ci-dep","password":"ci-deployer-password","role":"DEPLOYER","namespace":"default"}' \
+            -o /dev/null
+          D=$(curl -sk -X POST https://localhost:7433/api/v1/auth/login \
+                -H 'Content-Type: application/json' \
+                -d '{"username":"ci-dep","password":"ci-deployer-password"}' \
+              | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+          scoped=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $D" \
+            'https://localhost:7433/api/v1/metrics/series?metric=nodes.total')
+          echo "cluster metric as DEPLOYER -> $scoped"
+          [ "$scoped" = "403" ] || fail=1
+          own=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $D" \
+            'https://localhost:7433/api/v1/metrics/series?metric=deployment.cpu&namespace=default&name=ci-web')
+          echo "own Deployment metric as DEPLOYER -> $own"
+          [ "$own" = "200" ] || fail=1
+          exit $fail
+
       - name: Install Playwright
         working-directory: e2e
         run: |
@@ -299,6 +471,102 @@ jobs:
           ADMIN_PASSWORD: ${{ env.RIGGER_ADMIN_PASSWORD }}
         run: node console.mjs
 
+      # Traefik ingress. The single assertion that matters here is the HTTP request through Traefik:
+      # every other check below was green while routing was completely dead, because Traefik <= 3.5
+      # pins Docker API 1.24 in its Swarm provider and cannot negotiate it, so on Engine 29 it starts,
+      # reports 1/1, answers HTTP and discovers nothing. A wrong label spelling fails the same silent
+      # way. Compilation, labels and networks prove nothing on their own.
+      - name: Traefik ingress routes traffic
+        run: |
+          set -e
+          T=$(cat /tmp/token)
+          fail=0
+          host=ci-ingress.rigger.test
+          api() { curl -sk -H "Authorization: Bearer $T" -H 'Content-Type: application/json' "$@"; }
+          apply() { api -X POST -o /dev/null -w '%{http_code}' \
+            "https://localhost:7433/api/v1/namespaces/default/apply" -d "$1"; }
+          route() { curl -s -o /dev/null -w '%{http_code}' -H "Host: $1" http://127.0.0.1/; }
+          until_route() { # host, expected, seconds
+            for i in $(seq 1 "$3"); do [ "$(route "$1")" = "$2" ] && return 0; sleep 1; done
+            return 1
+          }
+
+          # One backslash in the argument, not two. printf does NOT interpret escapes inside a %s
+          # argument, so '\\n' reached the JSON as an escaped backslash plus 'n' — the ingress block
+          # arrived as literal text on one line, spec.ingress deserialised as a string instead of a
+          # mapping, and the apply 500'd with every check below cascading off it.
+          svc() { printf '{"manifest":"apiVersion: rigger.io/v1\\nkind: Service\\nmetadata:\\n  name: ci-web-svc\\n  namespace: default\\nspec:\\n  type: LoadBalancer\\n  selector:\\n    app: ci-web\\n  ports:\\n    - port: 18080\\n      targetPort: 80\\n      protocol: TCP\\n%s"}' "$1"; }
+
+          echo "== network =="
+          net=$(docker network inspect rigger-ingress --format '{{.Driver}} {{.Scope}}')
+          echo "  $net"; [ "$net" = "overlay swarm" ] || fail=1
+
+          echo "== controller =="
+          for i in $(seq 1 40); do
+            reps=$(docker service ls --filter label=rigger.io/component=ingress-controller --format '{{.Replicas}}')
+            [ "$reps" = "1/1" ] && break; sleep 3
+          done
+          echo "  replicas=$reps"; [ "$reps" = "1/1" ] || fail=1
+          ctl=$(docker service inspect rigger-ingress-controller \
+            --format '{{index .Spec.Labels "rigger.io/managed"}}|{{(index .Spec.TaskTemplate.ContainerSpec.Mounts 0).ReadOnly}}|{{.Spec.TaskTemplate.Placement.Constraints}}')
+          echo "  managed|socketReadOnly|constraints = $ctl"
+          case "$ctl" in "|true|[node.role == manager]") ;; *) echo "  controller hardening wrong"; fail=1;; esac
+
+          echo "== ingress on the existing ci-web-svc =="
+          code=$(apply "$(svc '  ingress:\n    host: '"$host"'\n    tls: false\n')")
+          echo "  apply -> $code"; [ "$code" = "200" ] || fail=1
+
+          echo "== labels and network attachment =="
+          for i in $(seq 1 30); do
+            rule=$(docker service inspect rigger-default-ci-web \
+              --format '{{index .Spec.Labels "traefik.http.routers.rigger-default-ci-web-svc.rule"}}' 2>/dev/null || true)
+            [ -n "$rule" ] && break; sleep 3
+          done
+          echo "  rule=$rule"
+          [ "$rule" = "Host(\`$host\`)" ] || { echo "  router rule wrong"; fail=1; }
+          docker service inspect rigger-default-ci-web --format '{{.Spec.Labels}}' | grep -q 'traefik.docker.' \
+            && { echo "  v2 label spelling emitted — fails silently with a 404"; fail=1; } || true
+          netid=$(docker network inspect -f '{{.Id}}' rigger-ingress)
+          # Docker echoes the network ID back, not the name: comparing to the name silently passes nothing.
+          docker service inspect rigger-default-ci-web --format '{{.Spec.TaskTemplate.Networks}}' | grep -q "$netid" \
+            || { echo "  network not attached by ID"; fail=1; }
+
+          echo "== THE PROOF: HTTP through Traefik =="
+          # 15s reconcile + ~15s Traefik provider refresh + task recreation from the network change.
+          until_route "$host" 200 120 && echo "  $host -> 200" || { echo "  $host -> $(route $host) after 120s"; fail=1; }
+          echo "  unknown host -> $(route nope.rigger.test) (expect 404)"
+
+          echo "== labels, network and published ports survive an unrelated update =="
+          echo y | java -jar artifacts/riggerctl.jar scale deployment ci-web --replicas=2 -n default -i
+          sleep 25
+          docker service inspect rigger-default-ci-web --format '{{.Spec.EndpointSpec.Ports}}' | grep -q 18080 \
+            || { echo "  published ports wiped by the update"; fail=1; }
+          docker service inspect rigger-default-ci-web --format '{{.Spec.Labels}}' | grep -q 'traefik.enable' \
+            || { echo "  traefik labels wiped by the update"; fail=1; }
+          until_route "$host" 200 90 && echo "  routing after scale -> 200" || { echo "  routing broken after scale"; fail=1; }
+
+          echo "== convergence, both directions =="
+          # Stable: an unstable spec-hash makes the version index climb forever.
+          a=$(docker service inspect rigger-default-ci-web --format '{{.Version.Index}}')
+          sleep 45
+          b=$(docker service inspect rigger-default-ci-web --format '{{.Version.Index}}')
+          echo "  version index $a -> $b"; [ "$a" = "$b" ] || { echo "  still updating"; fail=1; }
+          # And responsive: a hash that omits the binding never applies a change at all. Each of those
+          # two bugs passes the other's test, so both directions are required.
+          apply "$(svc '  ingress:\n    host: ci2.rigger.test\n    tls: false\n')" >/dev/null
+          until_route ci2.rigger.test 200 120 && echo "  new host -> 200" || { echo "  host change never applied"; fail=1; }
+
+          echo "== removing the ingress =="
+          apply "$(svc '')" >/dev/null
+          sleep 25
+          docker service inspect rigger-default-ci-web --format '{{.Spec.Labels}}' | grep -q 'traefik.enable' \
+            && { echo "  traefik labels not removed"; fail=1; } || true
+          docker service inspect rigger-default-ci-web --format '{{.Spec.EndpointSpec.Ports}}' | grep -q 18080 \
+            || { echo "  removing the ingress also dropped the published ports"; fail=1; }
+          # Traefik's own refresh lags the label removal by roughly one poll, so this must retry.
+          until_route ci2.rigger.test 404 60 && echo "  host now 404" || { echo "  host still routed"; fail=1; }
+          exit $fail
+
       - name: Delete resources through the API
         if: always()
         run: |
@@ -306,11 +574,19 @@ jobs:
           for r in "deployment ci-web" "service ci-web-svc" "configmap ci-cm"; do
             echo y | $CLI delete $r -n default -i || true
           done
+          # Filtered by the managed label on purpose: rigger-ingress-controller is deliberately NOT
+          # labelled `rigger.io/managed=true` (otherwise DeploymentController would GC it every 15s),
+          # so it stays up for the whole run and an unfiltered drain check would report a phantom leak
+          # forever.
           for i in $(seq 1 30); do
-            [ -z "$(docker service ls -q)" ] && [ -z "$(docker config ls -q)" ] && break
+            [ -z "$(docker service ls --filter label=rigger.io/managed=true -q)" ] \
+              && [ -z "$(docker config ls -q)" ] && break
             sleep 4
           done
-          echo "services left: $(docker service ls -q | wc -l), configs left: $(docker config ls -q | wc -l)"
+          echo "managed services left: $(docker service ls --filter label=rigger.io/managed=true -q | wc -l)," \
+               "configs left: $(docker config ls -q | wc -l)"
+          # And the controller must still be there — that is the regression test for the label rule.
+          docker service ls --filter label=rigger.io/component=ingress-controller --format '{{.Name}} {{.Replicas}}'
 
       - name: Upload diagnostics
         if: failure()

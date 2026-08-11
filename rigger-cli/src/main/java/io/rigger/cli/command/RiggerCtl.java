@@ -33,6 +33,7 @@ import picocli.CommandLine.*;
         UserCommand.class,
         ClusterCommand.class,
         ApplyCommand.class,
+        ConvertCommand.class,
         GetCommand.class,
         DeleteCommand.class,
         ScaleCommand.class,

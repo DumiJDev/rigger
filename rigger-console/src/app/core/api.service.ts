@@ -2,9 +2,9 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
-  ApplyResult, AuditResponse, ClusterMetrics, ClusterStatus, DeploymentMetrics, EventResponse,
-  GitOpsConfig, GitOpsState, NodeResponse, Page, PodResponse, ResourceResponse, Topology,
-  UserResponse,
+  ApplyResult, AuditResponse, ClusterMetrics, ClusterStatus, ConvertResult, DeploymentMetricName,
+  DeploymentMetrics, EventResponse, GitOpsConfig, GitOpsState, MetricName, MetricSeries,
+  NodeResponse, Page, PodResponse, ResourceResponse, Topology, UserResponse,
 } from './api.models';
 
 /**
@@ -49,6 +49,15 @@ export class ApiService {
   apply(namespace: string, manifest: string, dryRun = false): Observable<ApplyResult> {
     return this.http.post<ApplyResult>(`${this.ns(namespace)}/apply`, { manifest, dryRun });
   }
+
+  /**
+   * Translates docker-compose input to rigger.io/v1 YAML and reports what it could not carry across.
+   * Persists nothing — it exists so the conversion can be reviewed before it is applied, which
+   * previously happened invisibly inside apply().
+   */
+  convert(namespace: string, content: string): Observable<ConvertResult> {
+    return this.http.post<ConvertResult>(`${this.ns(namespace)}/convert`, { content });
+  }
   scale(namespace: string, name: string, replicas: number): Observable<unknown> {
     return this.http.post(`${this.ns(namespace)}/deployments/${name}/scale`, { replicas });
   }
@@ -63,6 +72,35 @@ export class ApiService {
   }
   deploymentMetrics(namespace: string, name: string): Observable<DeploymentMetrics> {
     return this.http.get<DeploymentMetrics>(`${this.ns(namespace)}/deployments/${name}/metrics`);
+  }
+
+  /**
+   * History for one metric, oldest point first — the server records it, so it survives a reload.
+   *
+   * <p>Cluster metrics take no namespace/name; per-Deployment ones require both. Sending them for a
+   * cluster metric is harmless (the server ignores them and forces cluster scope) but omitting them
+   * for a Deployment metric is a 400.
+   */
+  metricSeries(
+    metric: MetricName,
+    opts: { namespace?: string; name?: string; minutes?: number } = {},
+  ): Observable<MetricSeries> {
+    let params = new HttpParams().set('metric', metric);
+    if (opts.namespace) params = params.set('namespace', opts.namespace);
+    if (opts.name) params = params.set('name', opts.name);
+    if (opts.minutes) params = params.set('minutes', opts.minutes);
+    return this.http.get<MetricSeries>(`${this.base}/metrics/series`, { params });
+  }
+
+  /** Deployments with recorded samples for a metric, so a chart can plot them all without guessing. */
+  metricSeriesNames(
+    namespace: string,
+    metric: DeploymentMetricName,
+    minutes?: number,
+  ): Observable<string[]> {
+    let params = new HttpParams().set('metric', metric);
+    if (minutes) params = params.set('minutes', minutes);
+    return this.http.get<string[]>(`${this.ns(namespace)}/metrics/series-names`, { params });
   }
 
   // ── Cluster ─────────────────────────────────────────────────────────────

@@ -3,246 +3,294 @@
     "name": "Rigger",
     "tagline": "Operador Docker Swarm"
   },
-  "nav": {
-    "dashboard": "Painel",
-    "topology": "Topologia",
-    "workloads": "Cargas de trabalho",
-    "deployments": "Deployments",
-    "services": "Serviços",
-    "configmaps": "ConfigMaps",
-    "secrets": "Segredos",
-    "pods": "Pods",
-    "cluster": "Cluster",
-    "nodes": "Nós",
-    "gitops": "GitOps",
-    "audit": "Auditoria",
-    "users": "Utilizadores",
-    "apply": "Aplicar YAML",
-    "administration": "Administração"
-  },
-  "common": {
-    "name": "Nome",
-    "namespace": "Namespace",
-    "kind": "Tipo",
-    "image": "Imagem",
-    "replicas": "Réplicas",
-    "status": "Estado",
-    "actions": "Ações",
-    "appliedBy": "Aplicado por",
-    "updated": "Atualizado",
-    "created": "Criado",
-    "loading": "A carregar…",
-    "empty": "Sem dados",
-    "error": "Ocorreu um erro",
-    "retry": "Tentar novamente",
-    "cancel": "Cancelar",
-    "save": "Guardar",
-    "delete": "Eliminar",
-    "confirm": "Confirmar",
-    "close": "Fechar",
-    "search": "Pesquisar",
-    "refresh": "Atualizar",
-    "none": "Nenhum",
-    "yes": "Sim",
-    "no": "Não",
-    "all": "Todos",
-    "type": "Tipo",
-    "message": "Mensagem",
-    "time": "Hora",
-    "role": "Perfil",
-    "never": "Nunca"
-  },
-  "login": {
-    "title": "Iniciar sessão",
-    "subtitle": "Aceda à consola do seu cluster",
-    "username": "Utilizador",
-    "password": "Palavra-passe",
-    "submit": "Entrar",
-    "submitting": "A entrar…",
-    "failed": "Utilizador ou palavra-passe inválidos",
-    "expired": "A sessão expirou. Inicie sessão novamente."
-  },
-  "user": {
-    "signOut": "Terminar sessão",
-    "allNamespaces": "todos os namespaces"
-  },
-  "theme": {
-    "label": "Tema",
-    "light": "Claro",
-    "dark": "Escuro",
-    "system": "Sistema"
-  },
-  "language": {
-    "label": "Idioma"
-  },
-  "dashboard": {
-    "title": "Painel",
-    "subtitle": "Visão geral do cluster",
-    "nodes": "Nós ativos",
-    "deployments": "Deployments",
-    "runningTasks": "Tarefas a correr",
-    "resources": "Recursos",
-    "clusterHealth": "Saúde do cluster",
-    "healthy": "Saudável",
-    "degraded": "Degradado",
-    "recentActivity": "Atividade recente",
-    "noActivity": "Ainda não há atividade registada",
-    "workloadHealth": "Saúde das cargas de trabalho"
-  },
-  "topology": {
-    "title": "Topologia",
-    "subtitle": "Como as cargas de trabalho deste namespace se ligam",
-    "graph": "Grafo",
-    "list": "Lista",
-    "empty": "Nada implantado neste namespace ainda",
-    "exposes": "expõe",
-    "mounts": "monta",
-    "connections": "Ligações",
-    "noConnections": "Sem ligações"
-  },
-  "health": {
-    "healthy": "Saudável",
-    "degraded": "Degradado",
-    "down": "Em baixo",
-    "unknown": "Por reconciliar",
-    "na": "—"
-  },
-  "deployments": {
-    "title": "Deployments",
-    "subtitle": "Cargas de trabalho neste namespace",
-    "empty": "Nenhum deployment neste namespace",
-    "scale": "Escalar",
-    "scaleTitle": "Escalar {{name}}",
-    "scaleLabel": "Número de réplicas",
-    "deleteConfirm": "Eliminar o deployment {{name}}? Os contentores serão parados.",
-    "cpu": "CPU",
-    "hpa": "Autoscaling"
-  },
-  "services": {
-    "title": "Serviços",
-    "subtitle": "Exposição de rede",
-    "empty": "Nenhum serviço neste namespace",
-    "ports": "Portas",
-    "deleteConfirm": "Eliminar o serviço {{name}}?"
-  },
-  "configmaps": {
-    "title": "ConfigMaps",
-    "subtitle": "Configuração não sensível",
-    "empty": "Nenhum ConfigMap neste namespace",
-    "keys": "Chaves",
-    "deleteConfirm": "Eliminar o ConfigMap {{name}}?"
-  },
-  "secrets": {
-    "title": "Segredos",
-    "subtitle": "Valores cifrados em repouso e nunca devolvidos pela API",
-    "empty": "Nenhum segredo neste namespace",
-    "redacted": "oculto",
-    "deleteConfirm": "Eliminar o segredo {{name}}?"
-  },
-  "pods": {
-    "title": "Pods",
-    "subtitle": "Instâncias em execução",
-    "empty": "Nenhum pod em execução",
-    "node": "Nó",
-    "state": "Estado",
-    "desired": "Desejado",
-    "logs": "Registos"
-  },
-  "logs": {
-    "title": "Registos de {{pod}}",
-    "follow": "Seguir",
-    "pause": "Pausar",
-    "clear": "Limpar",
-    "filter": "Filtrar linhas",
-    "waiting": "À espera de saída…",
-    "ended": "Fim do fluxo",
-    "failed": "Não foi possível ler os registos"
-  },
-  "nodes": {
-    "title": "Nós",
-    "subtitle": "Máquinas do cluster",
-    "empty": "Nenhum nó registado",
-    "ip": "Endereço IP",
-    "primary": "Primário",
-    "swarmId": "ID no Swarm",
-    "lastSeen": "Visto pela última vez"
-  },
-  "cluster": {
-    "title": "Cluster",
-    "subtitle": "Estado e operações do cluster",
-    "up": "Provisionar cluster",
-    "sync": "Sincronizar cluster",
-    "manifest": "Manifesto do cluster (YAML)",
-    "upHelp": "Provisiona Docker e inicia o Swarm nos nós declarados via SSH.",
-    "syncHelp": "Reconcilia os nós declarados com o estado atual do cluster.",
-    "running": "Em execução…",
-    "succeeded": "Operação concluída",
-    "failed": "A operação falhou"
-  },
-  "gitops": {
-    "title": "GitOps",
-    "subtitle": "Sincronização contínua a partir de um repositório Git",
-    "state": "Estado",
-    "config": "Configuração",
-    "disabled": "GitOps está desativado",
-    "disabledHelp": "Ative-o abaixo para sincronizar manifestos a partir de um repositório.",
-    "enabled": "Ativo",
-    "repository": "Repositório",
-    "branch": "Ramo",
-    "sshKeyPath": "Caminho da chave SSH",
-    "sshKeyHelp": "Caminho no servidor para uma chave existente. Nenhuma credencial é guardada aqui.",
-    "pollInterval": "Intervalo de sondagem (segundos)",
-    "manifestPaths": "Caminhos de manifestos (separados por vírgulas)",
-    "lastCommit": "Último commit aplicado",
-    "lastSync": "Última sincronização",
-    "result": "Resultado",
-    "source": "Origem da configuração",
-    "sourceDatabase": "Base de dados",
-    "sourceProperties": "Variáveis de ambiente",
-    "sourceHelp": "Ao guardar aqui, esta configuração passa a ter precedência sobre as variáveis de ambiente.",
-    "saved": "Configuração guardada",
-    "pending": "À espera da primeira sincronização"
-  },
-  "audit": {
-    "title": "Auditoria",
-    "subtitle": "Registo de quem fez o quê",
-    "empty": "Sem entradas de auditoria",
-    "identity": "Identidade",
-    "action": "Ação",
-    "resource": "Recurso",
-    "result": "Resultado",
-    "sourceIp": "IP de origem"
-  },
-  "users": {
-    "title": "Utilizadores",
-    "subtitle": "Quem pode aceder a este cluster",
-    "empty": "Nenhum utilizador",
-    "create": "Criar utilizador",
-    "username": "Utilizador",
-    "password": "Palavra-passe",
-    "role": "Perfil",
-    "namespaceScope": "Namespace (vazio = todos)",
-    "active": "Ativo",
-    "deleteConfirm": "Eliminar o utilizador {{name}}?",
-    "created": "Utilizador criado"
-  },
   "apply": {
-    "title": "Aplicar manifesto",
-    "subtitle": "Aplique YAML rigger.io/v1 diretamente ao namespace selecionado",
+    "applied": "{{count}} recurso(s) aplicado(s)",
+    "compose": {
+      "applyConverted": "Aplicar YAML convertido",
+      "blocked": "A aplicação do ficheiro compose é recusada enquanto estes erros se mantiverem: a carga arrancaria, mas não seria a carga descrita. Corrige o compose, ou edita o YAML abaixo e aplica esse.",
+      "convert": "Converter",
+      "detected": "Isto parece um ficheiro docker-compose. Converte-o primeiro para ver o que o Rigger consegue e não consegue expressar.",
+      "issuesTitle": "Relatório da conversão",
+      "noIssues": "Nada se perdeu na conversão.",
+      "path": "Caminho no compose",
+      "previewTitle": "YAML rigger.io/v1 gerado",
+      "reviewFirst": "Revê a conversão abaixo e depois aplica.",
+      "severity": "Gravidade"
+    },
+    "dryRun": "Validar sem aplicar",
+    "empty": "Escreva ou cole um manifesto primeiro",
+    "failed": "Não foi possível aplicar o manifesto",
     "placeholder": "Cole aqui o seu YAML…",
     "submit": "Aplicar",
-    "dryRun": "Validar sem aplicar",
-    "applied": "{{count}} recurso(s) aplicado(s)",
-    "validated": "Manifesto válido ({{count}} recurso(s))",
-    "failed": "Não foi possível aplicar o manifesto",
-    "empty": "Escreva ou cole um manifesto primeiro"
+    "subtitle": "Aplique YAML rigger.io/v1 diretamente ao namespace selecionado",
+    "title": "Aplicar manifesto",
+    "validated": "Manifesto válido ({{count}} recurso(s))"
+  },
+  "audit": {
+    "action": "Ação",
+    "empty": "Sem entradas de auditoria",
+    "identity": "Identidade",
+    "resource": "Recurso",
+    "result": "Resultado",
+    "sourceIp": "IP de origem",
+    "subtitle": "Registo de quem fez o quê",
+    "title": "Auditoria"
+  },
+  "chart": {
+    "collecting": "a recolher…",
+    "lastHour": "última hora"
+  },
+  "cluster": {
+    "failed": "A operação falhou",
+    "manifest": "Manifesto do cluster (YAML)",
+    "running": "Em execução…",
+    "subtitle": "Estado e operações do cluster",
+    "succeeded": "Operação concluída",
+    "sync": "Sincronizar cluster",
+    "syncHelp": "Reconcilia os nós declarados com o estado atual do cluster.",
+    "title": "Cluster",
+    "up": "Provisionar cluster",
+    "upHelp": "Provisiona Docker e inicia o Swarm nos nós declarados via SSH."
+  },
+  "common": {
+    "actions": "Ações",
+    "all": "Todos",
+    "appliedBy": "Aplicado por",
+    "cancel": "Cancelar",
+    "clear": "Limpar",
+    "close": "Fechar",
+    "confirm": "Confirmar",
+    "created": "Criado",
+    "delete": "Eliminar",
+    "empty": "Sem dados",
+    "error": "Ocorreu um erro",
+    "image": "Imagem",
+    "kind": "Tipo",
+    "loading": "A carregar…",
+    "message": "Mensagem",
+    "name": "Nome",
+    "namespace": "Namespace",
+    "never": "Nunca",
+    "no": "Não",
+    "noMatches": "Nada corresponde à pesquisa",
+    "none": "Nenhum",
+    "refresh": "Atualizar",
+    "replicas": "Réplicas",
+    "retry": "Tentar novamente",
+    "role": "Perfil",
+    "save": "Guardar",
+    "search": "Pesquisar",
+    "status": "Estado",
+    "time": "Hora",
+    "type": "Tipo",
+    "updated": "Atualizado",
+    "yes": "Sim"
+  },
+  "configmaps": {
+    "deleteConfirm": "Eliminar o ConfigMap {{name}}?",
+    "empty": "Nenhum ConfigMap neste namespace",
+    "keys": "Chaves",
+    "search": "Pesquisar por nome ou chave",
+    "subtitle": "Configuração não sensível",
+    "title": "ConfigMaps"
+  },
+  "dashboard": {
+    "clusterHealth": "Saúde do cluster",
+    "cpuPerDeployment": "CPU por Deployment",
+    "degraded": "Degradado",
+    "deployments": "Deployments",
+    "healthy": "Saudável",
+    "noActivity": "Ainda não há atividade registada",
+    "nodes": "Nós ativos",
+    "recentActivity": "Atividade recente",
+    "resources": "Recursos",
+    "runningTasks": "Tarefas a correr",
+    "subtitle": "Visão geral do cluster",
+    "title": "Painel",
+    "workloadHealth": "Saúde das cargas de trabalho"
+  },
+  "density": {
+    "comfortable": "Confortável",
+    "compact": "Compacto",
+    "label": "Densidade"
+  },
+  "deployments": {
+    "cpu": "CPU",
+    "deleteConfirm": "Eliminar o deployment {{name}}? Os contentores serão parados.",
+    "empty": "Nenhum deployment neste namespace",
+    "hpa": "Autoscaling",
+    "scale": "Escalar",
+    "scaleLabel": "Número de réplicas",
+    "scaleTitle": "Escalar {{name}}",
+    "search": "Pesquisar por nome ou imagem",
+    "subtitle": "Cargas de trabalho neste namespace",
+    "title": "Deployments"
+  },
+  "details": {
+    "copied": "Copiado",
+    "copy": "Copiar",
+    "labelsRedacted": "A API não devolve etiquetas para segredos",
+    "noLabels": "A API não devolve etiquetas para este recurso",
+    "secretRedacted": "O servidor nunca devolve os valores dos segredos — a especificação abaixo é a resposta completa.",
+    "tab": {
+      "details": "Detalhes",
+      "labels": "Etiquetas",
+      "spec": "Especificação (YAML)"
+    },
+    "view": "Ver detalhes"
+  },
+  "errors": {
+    "forbidden": "Não tem permissão para esta operação",
+    "network": "Não foi possível contactar o servidor",
+    "notFound": "Não encontrado"
   },
   "events": {
     "actor": "Autor"
   },
-  "errors": {
-    "forbidden": "Não tem permissão para esta operação",
-    "notFound": "Não encontrado",
-    "network": "Não foi possível contactar o servidor"
+  "gitops": {
+    "branch": "Ramo",
+    "config": "Configuração",
+    "disabled": "GitOps está desativado",
+    "disabledHelp": "Ative-o abaixo para sincronizar manifestos a partir de um repositório.",
+    "enabled": "Ativo",
+    "lastCommit": "Último commit aplicado",
+    "lastSync": "Última sincronização",
+    "manifestPaths": "Caminhos de manifestos (separados por vírgulas)",
+    "pending": "À espera da primeira sincronização",
+    "pollInterval": "Intervalo de sondagem (segundos)",
+    "repository": "Repositório",
+    "result": "Resultado",
+    "saved": "Configuração guardada",
+    "source": "Origem da configuração",
+    "sourceDatabase": "Base de dados",
+    "sourceHelp": "Ao guardar aqui, esta configuração passa a ter precedência sobre as variáveis de ambiente.",
+    "sourceProperties": "Variáveis de ambiente",
+    "sshKeyHelp": "Caminho no servidor para uma chave existente. Nenhuma credencial é guardada aqui.",
+    "sshKeyPath": "Caminho da chave SSH",
+    "state": "Estado",
+    "subtitle": "Sincronização contínua a partir de um repositório Git",
+    "title": "GitOps"
+  },
+  "health": {
+    "degraded": "Degradado",
+    "down": "Em baixo",
+    "healthy": "Saudável",
+    "na": "—",
+    "unknown": "Por reconciliar"
+  },
+  "language": {
+    "label": "Idioma"
+  },
+  "login": {
+    "expired": "A sessão expirou. Inicie sessão novamente.",
+    "failed": "Utilizador ou palavra-passe inválidos",
+    "password": "Palavra-passe",
+    "submit": "Entrar",
+    "submitting": "A entrar…",
+    "subtitle": "Aceda à consola do seu cluster",
+    "title": "Iniciar sessão",
+    "username": "Utilizador"
+  },
+  "logs": {
+    "clear": "Limpar",
+    "ended": "Fim do fluxo",
+    "failed": "Não foi possível ler os registos",
+    "filter": "Filtrar linhas",
+    "follow": "Seguir",
+    "pause": "Pausar",
+    "title": "Registos de {{pod}}",
+    "waiting": "À espera de saída…"
+  },
+  "nav": {
+    "administration": "Administração",
+    "apply": "Aplicar YAML",
+    "audit": "Auditoria",
+    "cluster": "Cluster",
+    "configmaps": "ConfigMaps",
+    "dashboard": "Painel",
+    "deployments": "Deployments",
+    "gitops": "GitOps",
+    "nodes": "Nós",
+    "pods": "Pods",
+    "provisioning": "Provisionamento",
+    "secrets": "Segredos",
+    "services": "Serviços",
+    "toggleSidebar": "Alternar navegação",
+    "topology": "Topologia",
+    "users": "Utilizadores",
+    "workloads": "Cargas de trabalho"
+  },
+  "nodes": {
+    "empty": "Nenhum nó registado",
+    "ip": "Endereço IP",
+    "lastSeen": "Visto pela última vez",
+    "primary": "Primário",
+    "subtitle": "Máquinas do cluster",
+    "swarmId": "ID no Swarm",
+    "title": "Nós"
+  },
+  "pods": {
+    "desired": "Desejado",
+    "empty": "Nenhum pod em execução",
+    "logs": "Registos",
+    "node": "Nó",
+    "state": "Estado",
+    "subtitle": "Instâncias em execução",
+    "title": "Pods"
+  },
+  "refresh": {
+    "interval": "Intervalo de atualização",
+    "now": "Atualizar agora",
+    "off": "desligado"
+  },
+  "secrets": {
+    "deleteConfirm": "Eliminar o segredo {{name}}?",
+    "empty": "Nenhum segredo neste namespace",
+    "redacted": "oculto",
+    "search": "Pesquisar por nome",
+    "subtitle": "Valores cifrados em repouso e nunca devolvidos pela API",
+    "title": "Segredos"
+  },
+  "services": {
+    "deleteConfirm": "Eliminar o serviço {{name}}?",
+    "empty": "Nenhum serviço neste namespace",
+    "ports": "Portas",
+    "search": "Pesquisar por nome ou porta",
+    "subtitle": "Exposição de rede",
+    "title": "Serviços"
+  },
+  "theme": {
+    "dark": "Escuro",
+    "label": "Tema",
+    "light": "Claro",
+    "system": "Sistema"
+  },
+  "topology": {
+    "connections": "Ligações",
+    "empty": "Nada implantado neste namespace ainda",
+    "exposes": "expõe",
+    "graph": "Grafo",
+    "list": "Lista",
+    "mounts": "monta",
+    "noConnections": "Sem ligações",
+    "subtitle": "Como as cargas de trabalho deste namespace se ligam",
+    "title": "Topologia"
+  },
+  "user": {
+    "allNamespaces": "todos os namespaces",
+    "signOut": "Terminar sessão"
+  },
+  "users": {
+    "active": "Ativo",
+    "create": "Criar utilizador",
+    "created": "Utilizador criado",
+    "deleteConfirm": "Eliminar o utilizador {{name}}?",
+    "empty": "Nenhum utilizador",
+    "namespaceScope": "Namespace (vazio = todos)",
+    "password": "Palavra-passe",
+    "role": "Perfil",
+    "subtitle": "Quem pode aceder a este cluster",
+    "title": "Utilizadores",
+    "username": "Utilizador"
   }
 }
