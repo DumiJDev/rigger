@@ -123,15 +123,9 @@ public class TraefikController {
                 .withSource(props.getAcmeVolume())
                 .withTarget("/acme"));
 
-        String apiVersion = dockerApiVersion();
         var containerSpec = new ContainerSpec()
                 .withImage(props.getImage())
                 .withArgs(args)
-                // Traefik 3.3's Swarm provider does not negotiate the Docker API version: it defaults
-                // to 1.24, which modern daemons reject ("client version 1.24 is too old"). Traefik
-                // still starts and still reports 1/1 — it just discovers nothing and 404s every
-                // request. This env var is what makes the provider work at all.
-                .withEnv(List.of("DOCKER_API_VERSION=" + apiVersion))
                 .withMounts(mounts);
 
         var taskTemplate = new TaskSpec()
@@ -144,12 +138,16 @@ public class TraefikController {
         var ports = new ArrayList<PortConfig>();
         ports.add(publish(props.getHttpPort(), 80));
         ports.add(publish(props.getHttpsPort(), 443));
+        // The dashboard is reached directly on Traefik's own API entrypoint, not through a router.
+        if (props.isDashboard()) ports.add(publish(8080, 8080));
 
         var labels = new LinkedHashMap<String, String>();
         labels.put(LABEL_COMPONENT, COMPONENT_VALUE);
         labels.put("rigger.io/kind", "IngressController");
-        // Traefik must not route to itself unless the dashboard is explicitly asked for.
-        labels.put("traefik.enable", Boolean.toString(props.isDashboard()));
+        // Traefik must never route to itself: with exposedByDefault=false this is what keeps the
+        // controller out of its own provider. Setting it to true made the provider log
+        // "port is missing" on every refresh, since the controller carries no loadbalancer port label.
+        labels.put("traefik.enable", "false");
 
         var spec = new ServiceSpec()
                 .withName(SERVICE_NAME)
@@ -163,26 +161,10 @@ public class TraefikController {
         labels.put(LABEL_SPEC_HASH, Integer.toHexString(
                 (args + "|" + props.getImage() + "|" + props.getNodeDockerSocket() + "|"
                  + props.getAcmeVolume() + "|" + networkId + "|" + props.getHttpPort() + ":"
-                 + props.getHttpsPort() + "|" + props.isDashboard() + "|" + apiVersion).hashCode()));
+                 + props.getHttpsPort() + "|" + props.isDashboard()).hashCode()));
         return spec.withLabels(labels);
     }
 
-    /**
-     * Configured API version, or the one this daemon actually reports. Using the daemon's own value
-     * is always accepted (it is never below its own minimum), and it is stable for a given host — so
-     * folding it into the spec-hash does not cause churn.
-     */
-    private String dockerApiVersion() {
-        if (!props.getDockerApiVersion().isBlank()) return props.getDockerApiVersion();
-        try {
-            String reported = docker().versionCmd().exec().getApiVersion();
-            if (reported != null && !reported.isBlank()) return reported;
-        } catch (Exception e) {
-            log.warn("Could not read the Docker API version for Traefik ({}); falling back to 1.44",
-                    e.getMessage());
-        }
-        return "1.44";
-    }
 
     private static PortConfig publish(int published, int target) {
         return new PortConfig()

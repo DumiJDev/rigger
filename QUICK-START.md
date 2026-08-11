@@ -160,5 +160,18 @@ riggerctl logs   pod-name           -n production --follow
 RIGGER_ATTACH_EXISTING_SWARM=true   # não provisionar, usar Swarm existente
 RIGGER_ADMIN_PASSWORD=minhapass     # password do admin (default: admin)
 RIGGER_MASTER_KEY=$(openssl rand -base64 32)  # chave de cifração (produção)
-DOCKER_HOST=npipe:////./pipe/docker_engine    # Windows Docker Desktop
+DOCKER_SOCKET=npipe:////./pipe/docker_engine  # Windows: já é o default, define só para outro pipe
+DOCKER_HOST=tcp://10.0.0.10:2375              # daemon remoto; tem prioridade sobre DOCKER_SOCKET
 ```
+
+`DOCKER_SOCKET` e `DOCKER_HOST` são respeitados em **todas** as plataformas, incluindo Windows.
+Antes eram silenciosamente ignorados em Windows, porque o perfil `windows` fixava o valor.
+
+Em Windows, o Docker Desktop tem de estar a correr **antes** de aplicares qualquer coisa: o
+servidor arranca de qualquer maneira, mas todas as operações de workload falham e o log mostra
+`Docker is NOT reachable at ...`. Se o pipe herdado não existir, `docker context inspect` diz
+qual é o certo — habitualmente `npipe:////./pipe/dockerDesktopLinuxEngine`.
+
+Nota sobre provisionamento: `riggerctl cluster up` e `cluster sync` só provisionam nós **Linux**
+(Debian/RHEL ou `get.docker.com` por SSH). Uma máquina Windows pode alojar o servidor Rigger,
+mas não pode ser um nó provisionado. Caminhos de chave SSH aceitam `~/`, `~\` e `%USERPROFILE%`.

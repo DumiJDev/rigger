@@ -540,8 +540,8 @@ ser usado como o path de manifests de um repositório GitOps sem alterações. V
 | `RIGGER_JWT_KEY` | Produção | (insegura) | Chave de assinatura JWT. `openssl rand -base64 32` |
 | `TLS_KEYSTORE_PATH` | Produção | classpath dev cert | Caminho para o keystore PKCS12 |
 | `TLS_KEYSTORE_PASSWORD` | Produção | `rigger-dev` | Password do keystore |
-| `DOCKER_SOCKET` | Não | `/var/run/docker.sock` | Socket do Docker. Em Windows: `npipe:////./pipe/docker_engine` |
-| `DOCKER_HOST` | Não | — | Docker remoto TCP, ex: `tcp://10.0.0.10:2375` |
+| `DOCKER_SOCKET` | Não | `/var/run/docker.sock` (Linux) · `npipe:////./pipe/docker_engine` (Windows) | Socket do Docker. Em Windows o perfil `windows` já usa o named pipe por omissão — define esta variável só para apontar para outro pipe (por exemplo `npipe:////./pipe/dockerDesktopLinuxEngine`, que `docker context inspect` mostra). Aceita a forma `\\.\pipe\...` com barras invertidas. |
+| `DOCKER_HOST` | Não | — | Daemon remoto (`tcp://host:2375`). Tem prioridade sobre `DOCKER_SOCKET`. Para um daemon com TLS define também `rigger.docker.tlsCertPath`, um directório com `ca.pem`/`cert.pem`/`key.pem`. |
 | `RIGGER_ATTACH_EXISTING_SWARM` | Não | `false` | `true` para ligar a um Swarm já existente (sem provisionar) |
 | `RIGGER_DB_PATH` | Não | `./rigger-state.db` | Caminho para o ficheiro SQLite |
 | `RIGGER_ADMIN_NAME` | Não | `admin` | Nome do utilizador administrador de bootstrap |
