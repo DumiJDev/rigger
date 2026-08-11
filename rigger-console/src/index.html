@@ -5,7 +5,13 @@
     <title>Rigger</title>
     <base href="/ui/" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="icon" type="image/x-icon" href="favicon.ico" />
+    <!-- SVG first: it is the only format that stays sharp on a HiDPI tab strip. The PNG is the
+         fallback for anything that ignores an SVG icon, and doubles as the home-screen icon. The
+         Angular default favicon.ico is gone — a placeholder icon reads as an unfinished product. -->
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link rel="alternate icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+    <link rel="apple-touch-icon" href="favicon-180.png" />
+    <meta name="theme-color" content="#17161F" />
   </head>
   <body>
     <app-root></app-root>

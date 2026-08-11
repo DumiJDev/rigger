@@ -169,6 +169,31 @@ jobs:
           done
           curl -sk https://localhost:7433/ui/i18n/pt.json | head -c 1 | grep -q '{' \
             || { echo "i18n did not return JSON"; fail=1; }
+
+          # The brand assets: a 404 here means the console renders a broken-image icon where its logo
+          # should be, and the tab shows the browser's placeholder.
+          for path in /ui/favicon.svg /ui/favicon-32.png /ui/brand/lockup-on-dark.svg /ui/brand/lockup-on-light.svg; do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' "https://localhost:7433$path")
+            echo "$path -> $code"
+            [ "$code" = "200" ] || fail=1
+          done
+
+          # A MISSING asset must 404, not fall back to the SPA shell. Both of this project's worst UI
+          # bugs were that fallback: first a blanket forward that recursed into a StackOverflowError,
+          # then an unconditional existence-based fallback that served index.html with 200 text/html
+          # for any absent file — which is how a missing i18n bundle rendered every page blank with
+          # nothing in the console. Route-shaped paths must still fall back, so both are asserted:
+          # each past bug passes the check for the other.
+          for path in /ui/favicon.ico /ui/nao-existe.png /ui/i18n/xx.json; do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' "https://localhost:7433$path")
+            echo "missing $path -> $code (expect 404)"
+            [ "$code" = "404" ] || { echo "  a missing asset fell back to the SPA shell"; fail=1; }
+          done
+          for path in /ui/deployments /ui/topology; do
+            ct=$(curl -sk -o /dev/null -w '%{content_type}' "https://localhost:7433$path")
+            echo "route $path -> $ct (expect html)"
+            case "$ct" in *html*) ;; *) echo "  a client-side route stopped serving the shell"; fail=1;; esac
+          done
           exit $fail
 
       - name: CLI flow (apply, pods, logs framing, delete)

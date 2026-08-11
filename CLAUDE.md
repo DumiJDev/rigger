@@ -212,11 +212,25 @@ provisioning (`cluster up`/`sync` are never exercised), and HPA scaling under lo
   JPA entities mapping to `TEXT`/`INTEGER`-typed SQLite columns (timestamps, booleans) must
   set `columnDefinition` explicitly to match — Hibernate's schema *validate* mode is strict
   about this even though SQLite itself is dynamically typed.
+- **Brand assets live in `rigger-console/public/brand/`** with their own README, which is the place
+  to read before touching them. Three traps worth knowing here too: `currentColor` only inherits in
+  *inline* SVG, so `<img>` and favicon use needs colour-explicit copies; an XML comment cannot contain
+  `--`, so writing a CSS custom property name like `--masthead-text` in one silently invalidates the
+  file and the browser shows a broken-image icon with no console error; and Tailwind's preflight sets
+  `img { height: auto }`, which overrides an HTML `height` attribute — a lockup sized that way
+  computed to 0×0 while still reporting as loaded with a correct natural size. Size brand images with
+  utility classes, never with the attribute.
 - **Console**: Angular 22 (standalone + signals), served at `/ui/` from the same jar and origin as
-  the API — which is why no CORS configuration exists anywhere and shouldn't be added. `UiController`
-  forwards route-shaped paths to `index.html` for deep links, but deliberately excludes any segment
-  containing a dot: a blanket `/ui/**` forward also matches `index.html` and every hashed asset, so
-  the target re-matches the mapping and recurses until the request dies with a StackOverflowError.
+  the API — which is why no CORS configuration exists anywhere and shouldn't be added.
+  `UiResourceConfig` resolves `/ui/**` by **file existence** and falls back to `index.html` only for
+  **route-shaped** paths — ones whose last segment has no dot. Both halves of that sentence are scar
+  tissue. A blanket `/ui/**` forward also matched `index.html` itself and recursed until the request
+  died with a StackOverflowError. Then existence-based resolution fixed the recursion but kept an
+  *unconditional* fallback, so any absent file came back as the SPA shell with `200 text/html`: that
+  is how a missing `i18n/en.json` once rendered every page blank, with nothing in the browser console
+  to explain it, and it was still live until deleting `favicon.ico` produced an HTML favicon. A
+  mistyped asset must 404. CI asserts all three cases — real asset, route, missing asset — because
+  each of the two past bugs passed the check for the other.
   Auth is the same JWT the CLI uses, held in `localStorage`; there is no refresh endpoint, so a 401
   means re-login rather than a silent renewal. The console reads `GET /auth/permissions` to decide
   which actions to offer instead of hard-coding a copy of the RBAC table.

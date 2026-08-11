@@ -1,34 +1,44 @@
 # Brand marks
 
-Candidates for the project's official mark. **Not final** — pick one, then produce the derived assets
-listed at the bottom.
+`mark-knot` is the project's mark. The derived assets are produced and in use.
 
-| File | Concept | Verdict |
-|---|---|---|
-| `mark-knot.svg` | Two lines crossing and bound — "rigged together" | **Recommended.** The only candidate that stays legible at 16px, and it reads as a mark rather than as a letter. |
-| `mark-shackle.svg` | A shackle: the hardware that joins loads and takes the strain | More thematic and more memorable as an object, but at favicon size the pin starts merging into the bow. |
+| File | Use |
+|---|---|
+| `mark-knot.svg` | **Inline SVG only.** Uses `currentColor`, so it takes the surrounding text colour and works in either theme without a second file. |
+| `mark-knot-on-light.svg` | `<img>` on light surfaces. brand-600 `#7A40DA`. |
+| `mark-knot-on-dark.svg` | `<img>` on dark surfaces. brand-300 `#C1A9FF`. |
+| `lockup-on-light.svg` | Mark + wordmark, light surfaces. Used on the login page. |
+| `lockup-on-dark.svg` | Mark + wordmark, dark surfaces. Used in the masthead, which is dark in both themes. |
+| `../favicon.svg` | The mark reversed out of a filled violet tile. `../favicon-32.png` and `../favicon-180.png` are rasterised from it. |
+| `mark-shackle.svg` | Not used. Kept as the runner-up: more thematic as an object, but at favicon size its pin merges into the bow. |
 
-Two earlier attempts were discarded rather than shipped as filler:
+Two earlier candidates were discarded rather than shipped as filler: a **rigging/mast** mark, built
+from too many thin strokes so that at 16px it turned to mush and read as an antenna; and an **R
+monogram**, perfectly legible at every size and rejected for exactly that reason — a letter in a box
+is the criticism the mark exists to answer.
 
-- **rigging/mast** — lines fanning from a spar to anchored nodes. Conceptually the best fit for an
-  orchestrator, but built from too many thin strokes: at 16px it turned to mush and read as an
-  antenna.
-- **R monogram** — perfectly legible at every size, and rejected for exactly that reason: it is just
-  a letter in a box, which is the criticism of the current placeholder.
+## Four things to know before editing these
 
-## Two things to know before editing these
+**`currentColor` only inherits in inline SVG.** Referenced through `<img>` or used as a favicon, a
+`currentColor` mark renders **black**. That is why the colour-explicit copies exist. If you change
+`mark-knot.svg`, change all four derived files with it — nothing generates them.
 
-**`currentColor` only inherits in inline SVG.** These files use it so an inline mark picks up the
-surrounding text colour and works in both themes. Referenced through `<img>` or used as a favicon
-they render **black**, so any such use needs a colour-explicit copy.
+**The two variants are not the same violet, on purpose.** brand-600 on white, brand-300 on graphite.
+One value cannot carry both: brand-600 goes muddy on the masthead and brand-300 washes out on white.
+Matching the token each surface already uses is what makes them read as one mark rather than two.
 
-**Judge marks at real sizes, not in the editor.** Render each candidate at 16 / 24 / 40 / 72px on
-light and dark, plus once reversed inside a filled tile. Every problem above was invisible in the
-source and obvious in that grid.
+**An XML comment cannot contain `--`.** Writing a CSS custom property name like `--masthead-text` in
+a comment silently invalidates the whole file, and the browser renders a broken-image icon with no
+console error. Both lockups shipped that way for one render cycle. Write the token name without the
+leading dashes.
 
-## Still to produce, once a mark is chosen
+**The favicon carries its own background.** A favicon has no idea what it sits on: browser tab strips
+are light in one theme and near-black in the other, so a stroked mark on transparent either vanishes
+or greys out. Hence the filled tile with the mark reversed in white.
 
-- Colour-explicit variants for `<img>`/favicon use (brand teal, and white for reversed tiles).
-- `favicon.svg` plus a raster fallback, replacing the Angular default `favicon.ico`.
-- A horizontal lockup (mark + "Rigger" wordmark) for the shell header and the login page, which
-  currently render a letter in a rounded square.
+## Judge marks at real sizes, not in the editor
+
+Render every change at 16 / 20 / 24 / 40 / 72px on light and dark, plus the lockup at the heights it
+is actually used (h20 masthead, h36 login), and **look at the image**. Every problem listed on this
+page was invisible in the source and obvious in that grid — including the broken lockups, which
+looked like perfectly good XML.

@@ -512,6 +512,10 @@
     background-color: var(--surface-masthead);
     color: var(--masthead-text);
   }
+  /* Tailwind's preflight sets `img { height: auto }`, which silently overrides an HTML `height`
+     attribute — a lockup sized that way computed to 0x0 and vanished while still reporting as loaded
+     with a correct natural size. Size brand images with utility classes (h-5 w-auto), never with the
+     attribute. */
   .brand-mark {
     display: block;
     flex: none;
