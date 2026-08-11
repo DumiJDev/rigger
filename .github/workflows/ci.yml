@@ -491,6 +491,10 @@ jobs:
             return 1
           }
 
+          # One backslash in the argument, not two. printf does NOT interpret escapes inside a %s
+          # argument, so '\\n' reached the JSON as an escaped backslash plus 'n' — the ingress block
+          # arrived as literal text on one line, spec.ingress deserialised as a string instead of a
+          # mapping, and the apply 500'd with every check below cascading off it.
           svc() { printf '{"manifest":"apiVersion: rigger.io/v1\\nkind: Service\\nmetadata:\\n  name: ci-web-svc\\n  namespace: default\\nspec:\\n  type: LoadBalancer\\n  selector:\\n    app: ci-web\\n  ports:\\n    - port: 18080\\n      targetPort: 80\\n      protocol: TCP\\n%s"}' "$1"; }
 
           echo "== network =="
@@ -509,7 +513,7 @@ jobs:
           case "$ctl" in "|true|[node.role == manager]") ;; *) echo "  controller hardening wrong"; fail=1;; esac
 
           echo "== ingress on the existing ci-web-svc =="
-          code=$(apply "$(svc '  ingress:\\n    host: '"$host"'\\n    tls: false\\n')")
+          code=$(apply "$(svc '  ingress:\n    host: '"$host"'\n    tls: false\n')")
           echo "  apply -> $code"; [ "$code" = "200" ] || fail=1
 
           echo "== labels and network attachment =="
@@ -549,7 +553,7 @@ jobs:
           echo "  version index $a -> $b"; [ "$a" = "$b" ] || { echo "  still updating"; fail=1; }
           # And responsive: a hash that omits the binding never applies a change at all. Each of those
           # two bugs passes the other's test, so both directions are required.
-          apply "$(svc '  ingress:\\n    host: ci2.rigger.test\\n    tls: false\\n')" >/dev/null
+          apply "$(svc '  ingress:\n    host: ci2.rigger.test\n    tls: false\n')" >/dev/null
           until_route ci2.rigger.test 200 120 && echo "  new host -> 200" || { echo "  host change never applied"; fail=1; }
 
           echo "== removing the ingress =="
