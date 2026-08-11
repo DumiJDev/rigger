@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { AuthService } from './auth.service';
@@ -21,6 +21,18 @@ export class NamespaceService {
   readonly available = this._available.asReadonly();
   readonly current = signal<string>(localStorage.getItem(KEY) ?? 'default');
 
+  private readonly _loadError = signal<string | null>(null);
+  /**
+   * Non-null when the last {@link load} could not produce a usable namespace list.
+   *
+   * <p>Exists because a failed load and "this identity owns exactly one namespace" used to look
+   * identical from the outside — both left the picker as a static chip — so a broken or empty list
+   * degraded silently into a console whose every table renders empty for no stated reason. The
+   * value is diagnostic detail for a tooltip; the visible wording stays a translation key in the
+   * template.
+   */
+  readonly loadError = this._loadError.asReadonly();
+
   /** A namespace-scoped identity can't switch, so the picker should render as a static label. */
   readonly canSwitch = computed(() => this.auth.isClusterAdmin());
 
@@ -29,13 +41,23 @@ export class NamespaceService {
       const list = await firstValueFrom(this.http.get<string[]>('/api/v1/namespaces'));
       this._available.set(list);
 
+      if (!list.length) {
+        // An empty list means the selection we keep using cannot exist, so every workload call is
+        // aimed at nothing. Report it instead of leaving the stale value looking authoritative.
+        this._loadError.set(`No namespaces returned; still scoped to "${this.current()}"`);
+        return;
+      }
+
       // Keep the stored selection only if it still exists; otherwise fall back to something real
       // so the console never sits on a namespace that returns nothing but empty tables.
-      if (list.length && !list.includes(this.current())) {
+      if (!list.includes(this.current())) {
         this.set(list.includes('default') ? 'default' : list[0]);
       }
-    } catch {
-      this._available.set([]);
+      this._loadError.set(null);
+    } catch (err: unknown) {
+      // Deliberately don't wipe `_available`: a transient failure shouldn't collapse a picker that
+      // was working a moment ago into a chip. The error signal is what tells the shell to explain.
+      this._loadError.set(describe(err));
     }
   }
 
@@ -43,4 +65,10 @@ export class NamespaceService {
     this.current.set(namespace);
     localStorage.setItem(KEY, namespace);
   }
+}
+
+/** Best available detail for a tooltip — HttpErrorResponse first, then anything with a message. */
+function describe(err: unknown): string {
+  if (err instanceof HttpErrorResponse) return `${err.status} ${err.statusText}`.trim();
+  return err instanceof Error ? err.message : 'GET /api/v1/namespaces failed';
 }

@@ -232,11 +232,35 @@ Remaining gaps are feature-completion and polish:
 
 - Missing/broken endpoints referenced by `riggerctl`/README but absent in `rigger-api`:
   `cluster up`/`cluster sync` (logic exists in `ClusterOrchestrator`, just not wired to a
-  controller), pods listing, streaming logs (`riggerctl logs --follow` is broken end-to-end —
-  no server endpoint, and the CLI command bypasses its own authenticated HTTP client), `DELETE`
-  for Service/ConfigMap/Secret (only Deployment delete exists today), a read-only GitOps status
-  endpoint (the console's GitOps page calls it; `rigger-gitops` already tracks the state,
-  just needs a controller).
+  controller), and streaming logs (`riggerctl logs --follow` is broken end-to-end — no server
+  endpoint, and the CLI command bypasses its own authenticated HTTP client).
+  Pods listing, the read-only GitOps status endpoint, and `DELETE` for **all four** workload kinds
+  now exist and are runtime-verified (`WorkloadController` has `@DeleteMapping` for deployments,
+  services, configmaps and secrets; deleting the resource also removes the backing Docker
+  Config/Secret). This bullet claimed otherwise for a while after they landed — when you close a
+  gap, delete it from here, or the next person plans around a limitation that no longer exists.
+- **Two Rigger servers must never share one Swarm.** `ResourceDiffer` treats any service carrying
+  `rigger.io/managed=true` that has no matching row in *its own* database as an orphan and deletes
+  it, cluster-wide, on the first reconciliation cycle. Two instances with separate databases
+  therefore delete each other's services in a loop, each recreating its own. This is consistent
+  with the single-instance model (see Out of scope) but the failure mode is silent and looks like
+  random service churn — it cost real debugging time during a parallel-agent session. A
+  namespace-scoped or instance-scoped orphan filter is what would make it safe.
+- **`env[].valueFrom` is validated and then silently dropped.** `ServiceAdapter.buildServiceSpec`
+  filters `e -> e.value() != null`, so a `configMapKeyRef`/`secretKeyRef` env var parses, passes
+  validation, applies successfully, and never reaches the container. `secretRefs` on a Deployment
+  likewise mounts nothing — nothing in `rigger-swarm-adapter` reads it. Both are documented in
+  `examples/README.md` as known limitations; neither should be advertised as working.
+- **The JSON schemas document shapes the parser rejects.** `deployment.schema.json` describes
+  `resources.limits.{cpu,memory}` and `strategy.type`, but `ResourceRequirements` is flat
+  (`cpuLimit`/`memoryLimit`/`cpuReserved`/`memoryReserved`) and `RollingUpdateStrategy` has no
+  `type` component — and `ManifestParser` uses a bare ObjectMapper with `FAIL_ON_UNKNOWN_PROPERTIES`
+  on. So a manifest can pass schema validation and then fail to parse. This is what made the README
+  example wrong for months. Someone has to decide which side moves; until then the flat form is the
+  one that works.
+- `DELETE` can return a generic 500 on `SQLITE_BUSY` (`CannotAcquireLockException`) when
+  reconciliation is writing at the same moment. It succeeds on retry. Deserves a retry or a 409
+  rather than reading as a server fault.
 - `rigger-operator`'s `ServiceController.reconcile()` (MVP, Fase 2.7): resolves the target
   Deployment by selector match and republishes `LoadBalancer` ports via `EndpointSpec`/
   `PortConfig`; `ClusterIP` stays a no-op since Swarm's overlay DNS already covers it. Full

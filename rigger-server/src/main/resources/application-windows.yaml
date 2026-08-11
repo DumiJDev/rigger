@@ -3,6 +3,9 @@
 
 rigger:
   docker:
-    # Docker Desktop on Windows uses a named pipe
-    socket: npipe:////./pipe/docker_engine
-    host:
+    # Only the *default* differs from the base profile: Docker Desktop exposes a named pipe
+    # instead of a Unix socket. The placeholder must be repeated here — a profile-specific
+    # literal would win over the base profile's ${DOCKER_SOCKET:...} and silently ignore the
+    # env var, which README/QUICK-START document as configurable on every platform.
+    socket: ${DOCKER_SOCKET:npipe:////./pipe/docker_engine}
+    host:   ${DOCKER_HOST:}

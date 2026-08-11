@@ -55,6 +55,34 @@ export class DashboardPage {
   readonly history = signal<Record<string, [number, number][]>>({});
   readonly cpuSeries = signal<ChartSeries[]>([]);
 
+  /**
+   * The same KPI numbers for a caller who cannot read cluster metrics, derived from the namespace
+   * topology (which any role that can `get Deployment` may read).
+   *
+   * <p>Scoped to one namespace rather than the cluster, which is exactly what a namespace-scoped
+   * identity should see. Node counts have no namespaced equivalent, so that panel is simply not
+   * rendered — a zero there would read as "the cluster is down" rather than "you can't see this".
+   */
+  readonly namespaceSummary = computed(() => {
+    const nodes = this.topology()?.nodes ?? [];
+    const count = (kind: string) => nodes.filter((n) => n.kind === kind).length;
+    const deployments = nodes.filter((n) => n.kind === 'Deployment');
+    const sum = (pick: (n: (typeof deployments)[number]) => number | null) =>
+      deployments.reduce((total, n) => total + (pick(n) ?? 0), 0);
+    const services = count('Service');
+    const configMaps = count('ConfigMap');
+    const secrets = count('Secret');
+    return {
+      deployments: deployments.length,
+      services,
+      configMaps,
+      secrets,
+      resources: services + configMaps + secrets,
+      running: sum((n) => n.runningReplicas),
+      desired: sum((n) => n.desiredReplicas),
+    };
+  });
+
   readonly health = computed(() => {
     const nodes = this.topology()?.nodes.filter((n) => n.kind === 'Deployment') ?? [];
     const of_ = (h: string) => nodes.filter((n) => n.health === h).length;
@@ -107,6 +135,8 @@ export class DashboardPage {
       if (this.auth.isClusterAdmin()) {
         this.metrics.set(await this.optional(this.api.clusterMetrics()));
         await this.loadClusterHistory();
+      } else {
+        await this.loadNamespaceHistory(namespace);
       }
       await this.loadCpuHistory(namespace);
     } catch (e) {
@@ -132,6 +162,43 @@ export class DashboardPage {
       if (series) next[series.metric] = toXy(series);
     }
     this.history.set(next);
+  }
+
+  /**
+   * The replicas trend for a caller without cluster metrics, summed from the per-Deployment series
+   * they *are* allowed to read.
+   *
+   * <p>Every sample is written by one server-side scheduler in a single pass, so points from
+   * different Deployments share a timestamp — bucketing by timestamp gives a namespace total with
+   * no interpolation. Stored under the cluster series' key so the sparkline lookup is unchanged.
+   */
+  private async loadNamespaceHistory(namespace: string): Promise<void> {
+    const names = await this.optional(
+      this.api.metricSeriesNames(namespace, 'deployment.replicas.running', WINDOW_MINUTES),
+    );
+    if (!names?.length) {
+      this.history.set({});
+      return;
+    }
+    const series = await Promise.all(
+      names.map((name) =>
+        this.optional(
+          this.api.metricSeries('deployment.replicas.running', {
+            namespace, name, minutes: WINDOW_MINUTES,
+          }),
+        ),
+      ),
+    );
+    const totals = new Map<number, number>();
+    for (const s of series) {
+      for (const p of s?.points ?? []) {
+        const t = Date.parse(p.t);
+        totals.set(t, (totals.get(t) ?? 0) + p.v);
+      }
+    }
+    this.history.set({
+      'replicas.running': [...totals.entries()].sort((a, b) => a[0] - b[0]),
+    });
   }
 
   private async loadCpuHistory(namespace: string): Promise<void> {

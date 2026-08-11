@@ -30,7 +30,7 @@ public class UserController {
 
     @GetMapping
     public ResponseEntity<List<UserResponse>> list(HttpServletRequest req) {
-        requireAdmin(req);
+        authorize(req, "get");
         var users = userStore.listAll().stream()
             .map(id -> new UserResponse(id.name(), id.role().name(), id.namespace(), id.isActive()))
             .toList();
@@ -39,7 +39,7 @@ public class UserController {
 
     @PostMapping
     public ResponseEntity<UserResponse> create(@RequestBody UserRequest body, HttpServletRequest req) {
-        requireAdmin(req);
+        authorize(req, "create");
         if (userStore.exists(body.username())) {
             return ResponseEntity.status(409).build();
         }
@@ -57,16 +57,26 @@ public class UserController {
 
     @DeleteMapping("/{username}")
     public ResponseEntity<Void> revoke(@PathVariable String username, HttpServletRequest req) {
-        requireAdmin(req);
+        authorize(req, "delete");
         userStore.revoke(username);
         return ResponseEntity.noContent().build();
     }
 
-    private void requireAdmin(HttpServletRequest req) {
+    /**
+     * Authorizes one user-management action.
+     *
+     * <p>The action must be one of the verbs {@code RbacPolicyEngine.ADMIN_ONLY} declares for
+     * {@code "User"} ({@code get}/{@code create}/{@code delete}). A single {@code "manage"} verb
+     * used to be passed here instead, so {@code /auth/permissions} described three capabilities
+     * while the check tested a fourth that appears nowhere in the table — invisible only because
+     * CLUSTER_ADMIN short-circuits before the table is read.
+     */
+    private void authorize(HttpServletRequest req, String action) {
         var ctx = (RiggerContext) req.getAttribute("riggerContext");
-        if (ctx == null) throw new io.rigger.core.exception.AccessDeniedException("unknown","manage","users");
-        // Use a "cluster" namespace scope for admin operations
+        if (ctx == null) throw new io.rigger.core.exception.AccessDeniedException("unknown", action, "User");
+        // Cluster-scoped namespace: user management is not a namespaced operation, and the scope
+        // gate in authorize() is what makes it admin-only.
         var adminCtx = new RiggerContext(ctx.identity(), "cluster", ctx.sourceIp(), ctx.timestamp());
-        rbac.authorize(adminCtx, "manage", "User");
+        rbac.authorize(adminCtx, action, "User");
     }
 }

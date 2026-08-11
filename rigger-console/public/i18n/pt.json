@@ -114,6 +114,19 @@
     "subtitle": "Cargas de trabalho neste namespace",
     "title": "Deployments"
   },
+  "details": {
+    "copied": "Copiado",
+    "copy": "Copiar",
+    "labelsRedacted": "A API não devolve etiquetas para segredos",
+    "noLabels": "A API não devolve etiquetas para este recurso",
+    "secretRedacted": "O servidor nunca devolve os valores dos segredos — a especificação abaixo é a resposta completa.",
+    "tab": {
+      "details": "Detalhes",
+      "labels": "Etiquetas",
+      "spec": "Especificação (YAML)"
+    },
+    "view": "Ver detalhes"
+  },
   "errors": {
     "forbidden": "Não tem permissão para esta operação",
     "network": "Não foi possível contactar o servidor",

@@ -7,6 +7,7 @@ import io.rigger.core.domain.resource.*;
 import io.rigger.core.util.MemoryUnit;
 import io.rigger.swarm.client.DockerApiException;
 import io.rigger.swarm.client.DockerClientFactory;
+import io.rigger.swarm.config.IngressProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -27,15 +28,30 @@ public class ServiceAdapter {
     private static final String LABEL_NAMESPACE = "rigger.io/namespace";
     private static final String LABEL_NAME      = "rigger.io/name";
     private static final String LABEL_KIND      = "rigger.io/kind";
+    /**
+     * Marks a Swarm service as owned by the reconciliation loop.
+     *
+     * <p><strong>Never put this label on infrastructure Rigger deploys for itself</strong> (the
+     * Traefik ingress controller, above all). {@link #listManaged()} feeds
+     * {@code DeploymentController.reconcile()}, which deletes every managed service that has no
+     * matching row in the {@code resources} table — so a labelled Traefik would be garbage-collected
+     * within one 15s cycle of being created, forever. Infrastructure carries
+     * {@code rigger.io/component} instead, which this filter never sees.
+     */
     private static final String LABEL_MANAGED   = "rigger.io/managed";
     private static final String LABEL_SPEC_HASH = "rigger.io/spec-hash";
 
     private final DockerClientFactory factory;
     private final ConfigAdapter configAdapter;
+    private final NetworkAdapter networks;
+    private final IngressProperties ingressProps;
 
-    public ServiceAdapter(DockerClientFactory factory, ConfigAdapter configAdapter) {
+    public ServiceAdapter(DockerClientFactory factory, ConfigAdapter configAdapter,
+                          NetworkAdapter networks, IngressProperties ingressProps) {
         this.factory = factory;
         this.configAdapter = configAdapter;
+        this.networks = networks;
+        this.ingressProps = ingressProps;
     }
 
     private DockerClient docker() { return factory.get(); }
@@ -75,12 +91,16 @@ public class ServiceAdapter {
 
     /**
      * Creates a new Swarm service from a Rigger Deployment spec.
+     *
+     * @param binding the Rigger Service exposing this Deployment, or null when none does. Must be
+     *                the exact same value that was passed to {@link #computeSpecHash} for this
+     *                Deployment in this cycle.
      */
-    public String create(ObjectMeta meta, DeploymentSpec spec) {
+    public String create(ObjectMeta meta, DeploymentSpec spec, ServiceBinding binding) {
         log.info("Creating Swarm service for Deployment: {}/{}", meta.namespace(), meta.name());
         try {
-            var labels = buildLabels(meta, spec);
-            var serviceSpec = buildServiceSpec(meta, spec, labels);
+            var labels = buildLabels(meta, spec, binding);
+            var serviceSpec = buildServiceSpec(meta, spec, labels, binding);
 
             var response = docker().createServiceCmd(serviceSpec).exec();
             log.info("Service created: {}/{} -> swarm id={}", meta.namespace(), meta.name(), response.getId());
@@ -94,20 +114,20 @@ public class ServiceAdapter {
      * Updates an existing Swarm service to match the new spec.
      * Uses the service's current version for optimistic concurrency.
      */
-    public void update(Service existing, ObjectMeta meta, DeploymentSpec spec) {
+    public void update(Service existing, ObjectMeta meta, DeploymentSpec spec, ServiceBinding binding) {
         log.info("Updating Swarm service: {}/{}", meta.namespace(), meta.name());
         try {
-            var labels  = buildLabels(meta, spec);
-            var newSpec = buildServiceSpec(meta, spec, labels);
+            var labels  = buildLabels(meta, spec, binding);
+            var newSpec = buildServiceSpec(meta, spec, labels, binding);
             long version = existing.getVersion() != null ? existing.getVersion().getIndex() : 0L;
 
-            // buildServiceSpec never sets EndpointSpec — that's ServiceController's job
-            // (publishing/updating ports for a matching Rigger Service). Without this, any
-            // ordinary Deployment update (new image, more replicas, ...) would silently wipe
-            // published ports until the next Service reconciliation cycle put them back.
-            if (existing.getSpec() != null && existing.getSpec().getEndpointSpec() != null) {
-                newSpec.withEndpointSpec(existing.getSpec().getEndpointSpec());
-            }
+            // NOTE: the EndpointSpec is NOT carried over from `existing` any more. It used to be,
+            // because ServiceController was a second writer that published ports behind this
+            // method's back — two writers racing on one Swarm service, each overwriting the other's
+            // work every cycle. Ports (and Traefik labels, and the ingress network attachment) now
+            // originate inside buildServiceSpec from `binding`, making this the single writer.
+            // Re-adding the graft would resurrect deleted ports forever: once published, no spec
+            // that omits them could ever take them away.
 
             docker().updateServiceCmd(existing.getId(), newSpec)
                 .withVersion(version)
@@ -204,55 +224,95 @@ public class ServiceAdapter {
         }
     }
 
-    /**
-     * Updates only the published ports (EndpointSpec) of an existing Swarm service, leaving
-     * everything else (image, replicas, env, ...) untouched. Used by Service reconciliation —
-     * a Rigger Service doesn't own the underlying Swarm service, it just adjusts routing.
-     */
-    public void updatePublishedPorts(Service existing, List<PortConfig> ports) {
-        try {
-            var spec = existing.getSpec();
-            if (spec == null) return;
-            spec.withEndpointSpec(new EndpointSpec().withPorts(ports));
-            long version = existing.getVersion() != null ? existing.getVersion().getIndex() : 0L;
-            docker().updateServiceCmd(existing.getId(), spec).withVersion(version).exec();
-        } catch (Exception e) {
-            throw new DockerApiException("Failed to update published ports for " + existing.getId(), e);
-        }
-    }
-
     // ── private builders ──────────────────────────────────────────────────
 
-    private Map<String, String> buildLabels(ObjectMeta meta, DeploymentSpec spec) {
+    /**
+     * Rigger's own labels and Traefik's are applied <em>after</em> the user's {@code metadata.labels}
+     * so they always win. The other way round (which is how this started) let a manifest label named
+     * {@code rigger.io/spec-hash} overwrite the real hash and freeze reconciliation for that
+     * Deployment, or a hand-written {@code traefik.*} label silently redirect someone else's host.
+     */
+    private Map<String, String> buildLabels(ObjectMeta meta, DeploymentSpec spec, ServiceBinding binding) {
         var labels = new LinkedHashMap<String, String>();
+        if (meta.labels() != null) labels.putAll(meta.labels());
         labels.put(LABEL_NAMESPACE, meta.namespace());
         labels.put(LABEL_NAME,      meta.name());
         labels.put(LABEL_KIND,      "Deployment");
         labels.put(LABEL_MANAGED,   "true");
-        labels.put(LABEL_SPEC_HASH, computeSpecHash(meta, spec));
-        if (meta.labels() != null) labels.putAll(meta.labels());
+        labels.put(LABEL_SPEC_HASH, computeSpecHash(meta, spec, binding));
+
+        var ingress = ingressDecision(binding);
+        if (ingress != null) {
+            labels.putAll(TraefikLabels.forBinding(binding, ingressProps.getNetwork(), ingressProps));
+        }
         return labels;
     }
 
     /**
-     * Computes the {@code spec-hash} label value for a Deployment: the spec's own hash, folded
-     * with the resolved {@code configMapRefs} Config IDs so a ConfigMap content change (which
-     * doesn't touch the Deployment spec itself) still changes this value.
+     * Computes the {@code spec-hash} label value for a Deployment: the spec's own hash, folded with
+     * the resolved {@code configMapRefs} Config IDs (so a ConfigMap content change, which doesn't
+     * touch the Deployment spec itself, still changes this value) and with the resolved
+     * {@link ServiceBinding} (so a Service's ports or ingress changing, or the cluster's ingress
+     * configuration changing, does too).
      *
-     * <p>{@link io.rigger.operator.diff.ResourceDiffer} (in rigger-operator) must use this exact
-     * same computation to decide whether a Deployment needs updating — otherwise the value it
-     * compares against will never match what actually gets written here, and reconciliation
-     * updates the Swarm service on every single cycle forever instead of converging.
+     * <p>{@code ResourceDiffer} (in rigger-operator) must use this exact same computation to decide
+     * whether a Deployment needs updating — otherwise the value it compares against will never match
+     * what actually gets written here, and reconciliation updates the Swarm service on every single
+     * cycle forever instead of converging. There is deliberately no second entry point to this
+     * function: a divergent copy is precisely how that bug shipped once already.
+     *
+     * <p>Equally important in the other direction: everything folded in here must be
+     * <strong>stable</strong> across cycles. Map iteration order, a nondeterministic tie-break
+     * between two Services selecting the same Deployment, or a value re-read from Docker that varies
+     * would make the hash change on its own and the Swarm version index climb without end. Both
+     * failure modes pass the other's test, so verify convergence and propagation separately.
      */
-    public String computeSpecHash(ObjectMeta meta, DeploymentSpec spec) {
-        String base = Integer.toHexString(spec.hashCode());
+    public String computeSpecHash(ObjectMeta meta, DeploymentSpec spec, ServiceBinding binding) {
+        var sb = new StringBuilder(Integer.toHexString(spec.hashCode()));
+
         var resolvedConfigs = resolveConfigs(meta.namespace(), spec);
-        if (resolvedConfigs.isEmpty()) return base;
-        String configsSignature = resolvedConfigs.stream()
-            .map(ContainerSpecConfig::getConfigID)
-            .sorted()
-            .collect(Collectors.joining(","));
-        return base + "-" + Integer.toHexString(configsSignature.hashCode());
+        if (!resolvedConfigs.isEmpty()) {
+            String configsSignature = resolvedConfigs.stream()
+                .map(ContainerSpecConfig::getConfigID)
+                .sorted()
+                .collect(Collectors.joining(","));
+            sb.append('-').append(Integer.toHexString(configsSignature.hashCode()));
+        }
+
+        // Absent binding appends nothing at all, so Deployments with no Service keep exactly the
+        // hash they had before ingress existed and don't all churn once on upgrade.
+        if (binding != null) {
+            sb.append('-').append(Integer.toHexString(bindingSignature(binding).hashCode()));
+        }
+        return sb.toString();
+    }
+
+    /** Everything about a binding that changes the emitted Swarm spec, as a stable string. */
+    private String bindingSignature(ServiceBinding binding) {
+        var ingress = ingressDecision(binding);
+        String ingressPart = ingress == null
+            ? "noing"
+            : binding.ingressSignature() + "|" + ingressProps.signature() + "|" + ingress;
+        return binding.portsSignature() + "|" + ingressPart;
+    }
+
+    /**
+     * Returns the ingress network ID to attach to, or null when this Deployment gets no ingress —
+     * either because the feature is off, the binding declares none, or the overlay network isn't
+     * there yet (first cycle after enabling; the next cycle picks it up).
+     *
+     * <p>Lookup-only: {@code NetworkAdapter.resolveId} never creates the network, because this runs
+     * inside the spec-hash computation.
+     */
+    private String ingressDecision(ServiceBinding binding) {
+        if (binding == null || !binding.hasIngress() || !ingressProps.isEnabled()) return null;
+        String networkId = networks.resolveId(ingressProps.getNetwork());
+        if (networkId == null) {
+            log.warn("Ingress requested for {}/{} but overlay network '{}' does not exist yet — "
+                   + "skipping Traefik labels this cycle", binding.serviceNamespace(),
+                     binding.serviceName(), ingressProps.getNetwork());
+        }
+        return networkId;
     }
 
     /** Resolves configMapRefs to the currently live Docker Config for each name, skipping unresolved ones. */
@@ -267,7 +327,14 @@ public class ServiceAdapter {
         return refs;
     }
 
-    private com.github.dockerjava.api.model.ServiceSpec buildServiceSpec(ObjectMeta meta, DeploymentSpec spec, Map<String, String> labels) {
+    /**
+     * Rebuilds the complete docker-java ServiceSpec. {@link #update} calls this and sends the result
+     * as-is, so <strong>anything not produced in here is erased from the Swarm service</strong> on
+     * the next Deployment update — published ports, Traefik labels and the ingress network
+     * attachment all have to originate here rather than being patched in afterwards.
+     */
+    private com.github.dockerjava.api.model.ServiceSpec buildServiceSpec(
+            ObjectMeta meta, DeploymentSpec spec, Map<String, String> labels, ServiceBinding binding) {
         // Container spec
         var containerSpec = new ContainerSpec()
             .withImage(spec.image());
@@ -315,11 +382,40 @@ public class ServiceAdapter {
             .withReplicated(new ServiceReplicatedModeOptions()
                 .withReplicas(spec.replicas()));
 
-        return new com.github.dockerjava.api.model.ServiceSpec()
+        // Ingress overlay attachment. TaskTemplate.Networks, not ServiceSpec.Networks — the latter is
+        // deprecated in the Engine API and ignored by newer daemons. Attaching only when an ingress
+        // is actually configured matters: changing a task's networks RECREATES its tasks, so enabling
+        // the feature cluster-wide would otherwise restart every workload at once. Adding an ingress
+        // to one Service does restart that one app's tasks; that is expected and unavoidable.
+        String ingressNetworkId = ingressDecision(binding);
+        if (ingressNetworkId != null) {
+            taskTemplate.withNetworks(List.of(new NetworkAttachmentConfig().withTarget(ingressNetworkId)));
+        }
+
+        var serviceSpec = new com.github.dockerjava.api.model.ServiceSpec()
             .withName("rigger-" + meta.namespace() + "-" + meta.name())
             .withLabels(labels)
             .withTaskTemplate(taskTemplate)
             .withMode(mode)
             .withUpdateConfig(updateConfig);
+
+        // Published ports: the single place they are ever written. A binding that stops publishing
+        // (Service deleted, or switched to ClusterIP) leaves EndpointSpec unset, which is what
+        // actually removes the ports.
+        if (binding != null && binding.publishesPorts()) {
+            serviceSpec.withEndpointSpec(new EndpointSpec().withPorts(buildPortConfigs(binding)));
+        }
+        return serviceSpec;
+    }
+
+    private List<PortConfig> buildPortConfigs(ServiceBinding binding) {
+        return binding.ports().stream()
+            .map(p -> new PortConfig()
+                .withTargetPort(p.targetPort())
+                .withPublishedPort(p.port())
+                .withProtocol(PortConfigProtocol.valueOf(
+                    (p.protocol() == null ? "TCP" : p.protocol()).toUpperCase()))
+                .withPublishMode(PortConfig.PublishMode.ingress))
+            .toList();
     }
 }

@@ -49,6 +49,28 @@ public record CliConfig(
 
     public RiggerApiClient client() { return client(false); }
 
+    /**
+     * Expands a path taken from the CLI config or a flag. Single implementation for the whole
+     * CLI (see {@link RiggerApiClient}): besides {@code ~/} it accepts the spellings a Windows
+     * user will type — {@code ~\} and {@code %USERPROFILE%} — which Java never expands itself.
+     */
+    public static Path expandPath(String path) {
+        String p = path.trim();
+        if (p.regionMatches(true, 0, "%USERPROFILE%", 0, 13)) return underHome(p.substring(13));
+        if (p.equals("~"))                                    return underHome("");
+        if (p.startsWith("~/") || p.startsWith("~\\"))         return underHome(p.substring(1));
+        return Path.of(p);
+    }
+
+    /** Resolves a home-relative remainder, accepting either separator so Windows input works. */
+    private static Path underHome(String rest) {
+        Path base = Path.of(System.getProperty("user.home"));
+        for (String segment : rest.split("[/\\\\]")) {
+            if (!segment.isEmpty()) base = base.resolve(segment);
+        }
+        return base;
+    }
+
     private String loadToken() {
         try {
             if (Files.exists(TOKEN_PATH)) return Files.readString(TOKEN_PATH).trim();

@@ -73,10 +73,13 @@ export class Shell {
     },
     {
       labelKey: 'nav.cluster',
+      // Nodes and GitOps are cluster-scoped: their endpoints resolve the namespace to the literal
+      // "cluster", which the namespace gate rejects for a namespace-scoped identity before any RBAC
+      // grant is consulted. Offering them to a deployer only produced pages that 403 on load.
       items: [
-        { path: '/nodes', labelKey: 'nav.nodes', icon: 'server' },
+        { path: '/nodes', labelKey: 'nav.nodes', icon: 'server', adminOnly: true },
         { path: '/cluster', labelKey: 'nav.provisioning', icon: 'settings', adminOnly: true },
-        { path: '/gitops', labelKey: 'nav.gitops', icon: 'git' },
+        { path: '/gitops', labelKey: 'nav.gitops', icon: 'git', adminOnly: true },
       ],
     },
     {

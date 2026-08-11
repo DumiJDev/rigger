@@ -34,19 +34,30 @@
           {{ t('common.namespace') }}
         </span>
         @if (ns.canSwitch() && ns.available().length) {
+          <!-- [selected] per option, never [value] on the select: the host binding runs before @for
+               creates the options, so the assignment finds nothing to match, selectedIndex falls to
+               the browser's default (first option) and nothing re-applies it. The list arrives from
+               an async fetch here, which makes it certain rather than merely likely. -->
           <select
             class="masthead-select min-w-36"
-            [value]="ns.current()"
             (change)="onNamespaceChange($event)"
             [attr.aria-label]="t('common.namespace')"
           >
             @for (n of ns.available(); track n) {
-              <option [value]="n">{{ n }}</option>
+              <option [value]="n" [selected]="n === ns.current()">{{ n }}</option>
             }
           </select>
         } @else {
           <span class="chip" style="background-color: var(--masthead-border); color: inherit; border-color: transparent">
             {{ ns.current() }}
+          </span>
+        }
+        <!-- A failed or empty namespace load leaves the chip above looking authoritative while every
+             workload call targets a namespace that may not exist; say so instead. -->
+        @if (ns.loadError()) {
+          <span class="inline-flex items-center gap-1" style="color: var(--masthead-muted)" [title]="ns.loadError()!">
+            <r-icon name="alert" [size]="13" />
+            <span class="hidden sm:inline">{{ t('common.error') }}</span>
           </span>
         }
       </label>
@@ -65,15 +76,18 @@
         >
           <r-icon name="refresh" [size]="15" />
         </button>
+        <!-- [selected] per option, never [value] on the select: the host binding is applied before
+             @for creates the options, so a persisted interval like 30 matched nothing, the select
+             displayed "off" while the timer kept polling — and touching the select then wrote that
+             displayed "off" back over the real value. -->
         <select
           class="masthead-select"
-          [value]="refresh.interval()"
           (change)="onIntervalChange($event)"
           [attr.aria-label]="t('refresh.interval')"
           [title]="t('refresh.interval')"
         >
           @for (s of intervals; track s) {
-            <option [value]="s">{{ intervalLabel(s) }}</option>
+            <option [value]="s" [selected]="s === refresh.interval()">{{ intervalLabel(s) }}</option>
           }
         </select>
       </div>
@@ -102,14 +116,16 @@
 
       <label class="flex items-center gap-1" [title]="t('language.label')">
         <r-icon name="globe" [size]="15" style="color: var(--masthead-muted)" />
+        <!-- [selected] per option, never [value] on the select: the host binding precedes the @for
+             that creates the options, so a persisted "en" showed as "PT" while Transloco served
+             English. Bound per option it is evaluated as each option is created. -->
         <select
           class="masthead-select"
-          [value]="activeLang()"
           (change)="setLang($any($event.target).value)"
           [attr.aria-label]="t('language.label')"
         >
           @for (l of langs; track l) {
-            <option [value]="l">{{ l.toUpperCase() }}</option>
+            <option [value]="l" [selected]="l === activeLang()">{{ l.toUpperCase() }}</option>
           }
         </select>
       </label>

@@ -114,6 +114,19 @@
     "subtitle": "Workloads in this namespace",
     "title": "Deployments"
   },
+  "details": {
+    "copied": "Copied",
+    "copy": "Copy",
+    "labelsRedacted": "The API returns no labels for Secrets",
+    "noLabels": "No labels returned for this resource",
+    "secretRedacted": "The server never returns Secret values — the spec below is the whole response.",
+    "tab": {
+      "details": "Details",
+      "labels": "Labels",
+      "spec": "Spec (YAML)"
+    },
+    "view": "View details"
+  },
   "errors": {
     "forbidden": "You don't have permission for this operation",
     "network": "Could not reach the server",

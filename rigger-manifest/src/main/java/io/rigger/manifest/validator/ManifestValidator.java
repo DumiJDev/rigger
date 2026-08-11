@@ -18,7 +18,7 @@ import java.util.regex.Pattern;
  *   <li>metadata.namespace: required, same pattern as name</li>
  *   <li>Deployment: image must be non-blank; replicas >= 0</li>
  *   <li>HPA: minReplicas <= maxReplicas</li>
- *   <li>Service: selector and ports required</li>
+ *   <li>Service: selector and ports required; ingress only with type LoadBalancer</li>
  *   <li>Secret: data or vaultRef required</li>
  * </ul>
  */
@@ -78,6 +78,28 @@ public class ManifestValidator {
         if (spec == null) { v.add("spec is required for Service"); return; }
         if (spec.selector() == null || spec.selector().isEmpty()) v.add("spec.selector is required for Service");
         if (spec.ports() == null || spec.ports().isEmpty()) v.add("spec.ports is required for Service");
+        validateIngress(spec, v);
+    }
+
+    /**
+     * Ingress is only reconciled for {@code LoadBalancer} — a {@code ClusterIP} Service carrying an
+     * {@code ingress} block would be silently ignored by the operator, which is exactly the kind of
+     * "applied fine, never worked" failure that costs an afternoon. Reject it at apply time instead.
+     *
+     * <p>Cross-namespace host uniqueness is NOT checked here: this module has no access to the
+     * resource store (rigger-manifest depends only on rigger-core). It is enforced at reconcile time
+     * by {@code ServiceBindingResolver}, which drops the losing claim deterministically and warns.
+     */
+    private void validateIngress(ServiceSpec spec, List<String> v) {
+        var ingress = spec.ingress();
+        if (ingress == null) return;
+        if (spec.type() != ServiceType.LOAD_BALANCER)
+            v.add("spec.ingress requires spec.type: LoadBalancer (got " + spec.type() + ")");
+        if (spec.ports() != null && !spec.ports().isEmpty()) {
+            int target = spec.ports().get(0).targetPort();
+            if (target < 1 || target > 65535)
+                v.add("spec.ingress needs a valid first spec.ports[].targetPort to route to");
+        }
     }
 
     private void validateSecret(SecretSpec spec, List<String> v) {

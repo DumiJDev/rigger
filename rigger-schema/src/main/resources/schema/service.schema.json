@@ -75,6 +75,32 @@
             "LoadBalancer"
           ],
           "default": "ClusterIP"
+        },
+        "ingress": {
+          "type": "object",
+          "description": "HTTP ingress routed by the cluster's Traefik controller. Only honoured for type: LoadBalancer.",
+          "required": [
+            "host"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "type": "string",
+              "description": "Bare virtual host — no scheme, port or path.",
+              "maxLength": 253,
+              "pattern": "^(\\*\\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$"
+            },
+            "path": {
+              "type": "string",
+              "description": "Optional path prefix; adds PathPrefix(`/p`) to the router rule.",
+              "pattern": "^/.*$"
+            },
+            "tls": {
+              "type": "boolean",
+              "description": "Terminate TLS at the ingress controller. Without a cluster-side ACME cert resolver, Traefik serves a self-signed certificate.",
+              "default": false
+            }
+          }
         }
       }
     }

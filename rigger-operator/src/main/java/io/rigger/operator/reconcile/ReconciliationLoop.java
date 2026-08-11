@@ -21,6 +21,8 @@ import java.util.concurrent.Executors;
  *
  * <p>Each cycle:
  * <ol>
+ *   <li>Runs TraefikController first, sequentially — it provisions the ingress overlay network that
+ *       the Deployment reconciliation then attaches workloads to</li>
  *   <li>Runs DeploymentController, ServiceController, ConfigMapController, SecretController
  *       in parallel</li>
  *   <li>Records the cycle result (changes, errors, duration)</li>
@@ -35,17 +37,20 @@ public class ReconciliationLoop {
 
     private static final Logger log = LoggerFactory.getLogger(ReconciliationLoop.class);
 
+    private final TraefikController    traefikCtrl;
     private final DeploymentController deploymentCtrl;
     private final ServiceController    serviceCtrl;
     private final ConfigMapController  configMapCtrl;
     private final SecretController     secretCtrl;
     private final RiggerEventBus       eventBus;
 
-    public ReconciliationLoop(DeploymentController deploymentCtrl,
+    public ReconciliationLoop(TraefikController    traefikCtrl,
+                               DeploymentController deploymentCtrl,
                                ServiceController    serviceCtrl,
                                ConfigMapController  configMapCtrl,
                                SecretController     secretCtrl,
                                RiggerEventBus       eventBus) {
+        this.traefikCtrl    = traefikCtrl;
         this.deploymentCtrl = deploymentCtrl;
         this.serviceCtrl    = serviceCtrl;
         this.configMapCtrl  = configMapCtrl;
@@ -60,6 +65,12 @@ public class ReconciliationLoop {
 
         int totalChanges = 0;
         int errors = 0;
+
+        // Ingress infrastructure first, and deliberately NOT in the parallel batch below: it creates
+        // the overlay network that DeploymentController then attaches workloads to. Run concurrently,
+        // the very first cycle after enabling ingress would hash and write specs before the network
+        // existed, producing labels with no attachment and one wasted update to fix it.
+        totalChanges += runController("Traefik", traefikCtrl::reconcile);
 
         // One virtual thread per controller so each can block on Docker I/O concurrently.
         // runController swallows and logs each controller's own failures, so a single bad

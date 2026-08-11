@@ -5,13 +5,14 @@ import { ResourceResponse } from '../../core/api.models';
 import { DataState } from '../../shared/data-state';
 import { ListToolbar } from '../../shared/list-toolbar';
 import { PageHeader } from '../../shared/page-header';
+import { DetailDrawer } from '../../shared/detail-drawer';
 import { RowAction, RowMenu } from '../../shared/row-menu';
 import { ResourceListPage } from './resource-page.base';
 
 @Component({
   selector: 'r-configmaps',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoDirective, PageHeader, DataState, ListToolbar, RowMenu],
+  imports: [TranslocoDirective, PageHeader, DataState, ListToolbar, RowMenu, DetailDrawer],
   template: `
     <ng-container *transloco="let t">
       <r-page-header [title]="t('configmaps.title')" [subtitle]="t('configmaps.subtitle')">
@@ -49,7 +50,7 @@ import { ResourceListPage } from './resource-page.base';
             </thead>
             <tbody>
               @for (item of visible(); track item.name) {
-                <tr>
+                <tr class="clickable" (click)="openDetails(item)">
                   <td class="font-medium">{{ item.name }}</td>
                   <td>
                     <div class="flex flex-wrap gap-1">
@@ -69,7 +70,7 @@ import { ResourceListPage } from './resource-page.base';
                     <r-row-menu
                       [actions]="actionsFor()"
                       [disabled]="busyItem() === item.name"
-                      (selected)="confirming.set(item.name)"
+                      (selected)="onAction($event, item)"
                     />
                   </td>
                 </tr>
@@ -93,6 +94,9 @@ import { ResourceListPage } from './resource-page.base';
             </div>
           </div>
         </div>
+      }
+      @if (viewing(); as item) {
+        <r-detail-drawer [resource]="item" (closed)="viewing.set(null)" />
       }
     </ng-container>
   `,
@@ -120,11 +124,18 @@ export class ConfigMapsPage extends ResourceListPage {
     return key === 'keys' ? this.keys(item).length : super.sortValue(item, key);
   }
 
-  /** Delete is the only action these kinds support today; the menu grows when the API does. */
+  /** Details, plus delete when allowed — the only mutation these kinds support today. */
   actionsFor(): RowAction[] {
-    return this.canDelete()
-      ? [{ id: 'delete', labelKey: 'common.delete', icon: 'trash', danger: true }]
-      : [];
+    const actions: RowAction[] = [this.detailsAction];
+    if (this.canDelete()) {
+      actions.push({ id: 'delete', labelKey: 'common.delete', icon: 'trash', danger: true });
+    }
+    return actions;
+  }
+
+  onAction(id: string, item: ResourceResponse): void {
+    if (id === 'details') this.openDetails(item);
+    if (id === 'delete') this.confirming.set(item.name);
   }
 
   /** Key names only — values are shown on purpose nowhere, to keep parity with Secrets. */

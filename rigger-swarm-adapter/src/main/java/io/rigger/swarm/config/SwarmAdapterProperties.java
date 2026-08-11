@@ -29,7 +29,12 @@ public class SwarmAdapterProperties {
     /** Remote Docker host (tcp:// or unix://). Overrides socket when set. */
     private String host;
 
+    /**
+     * Directory holding ca.pem/cert.pem/key.pem for a TLS-protected remote daemon.
+     * Only meaningful together with a tcp:// host; ignored for local socket/named pipe.
+     */
     private String tlsCertPath;
+
     private int    connectTimeoutSeconds = 10;
     private int    readTimeoutSeconds    = 60;
 
@@ -55,12 +60,25 @@ public class SwarmAdapterProperties {
      * Priority: explicit host > socket value.
      */
     public String effectiveDockerHost() {
-        if (!isLocalSocket()) return host;
-        // Normalise socket path to a URI
-        if (socket.startsWith("npipe://") || socket.startsWith("unix://") || socket.startsWith("tcp://")) {
-            return socket;
-        }
-        if (socket.startsWith("npipe:")) return socket; // already a named pipe URI
-        return "unix://" + socket;
+        if (!isLocalSocket()) return host.trim();
+        String s = socket.trim();
+        if (s.regionMatches(true, 0, "npipe:", 0, 6)) return namedPipe(s.substring(6));
+        if (s.startsWith("unix://") || s.startsWith("tcp://")) return s;
+        // Bare named pipe, as Windows itself displays it (\\.\pipe\docker_engine).
+        if (s.replace('\\', '/').startsWith("//./pipe/")) return namedPipe(s);
+        return "unix://" + s;
+    }
+
+    /**
+     * Canonicalises any named-pipe spelling to docker-java's own form,
+     * {@code npipe:////./pipe/docker_engine}. Windows shows pipes with backslashes and a varying
+     * number of leading separators, and {@code URI.create} in the client factory rejects
+     * backslashes outright — so normalise here rather than fail at startup.
+     */
+    private static String namedPipe(String rest) {
+        String path = rest.replace('\\', '/');
+        int i = 0;
+        while (i < path.length() && path.charAt(i) == '/') i++;
+        return "npipe:////" + path.substring(i);
     }
 }
