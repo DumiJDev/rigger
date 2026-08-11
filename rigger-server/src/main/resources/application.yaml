@@ -122,6 +122,35 @@ rigger:
   swarm:
     attach-existing: ${RIGGER_ATTACH_EXISTING_SWARM:false}
 
+  ingress:
+    # Rigger provisions Traefik itself: the overlay network plus the controller service. Off by
+    # default because turning it on binds 80/443 on the node, which collides with anything already
+    # serving there on a development machine. false also removes the controller and strips the
+    # traefik.* labels from every workload.
+    enabled: ${RIGGER_INGRESS_ENABLED:false}
+    network: ${RIGGER_INGRESS_NETWORK:rigger-ingress}
+    # v3.6 is the practical MINIMUM, not a preference. Traefik <= 3.5 pins Docker API version 1.24
+    # in its Swarm provider and cannot negotiate it; Engine 29 requires >= 1.40, so the provider
+    # discovers nothing while Traefik still starts, still reports 1/1 and still answers HTTP — every
+    # host 404s. DOCKER_API_VERSION in its environment does not fix it; the pin is in Traefik's code.
+    image: ${RIGGER_INGRESS_IMAGE:traefik:v3.6}
+    entry-point:     ${RIGGER_INGRESS_ENTRYPOINT:web}
+    tls-entry-point: ${RIGGER_INGRESS_TLS_ENTRYPOINT:websecure}
+    http-port:  ${RIGGER_INGRESS_HTTP_PORT:80}
+    https-port: ${RIGGER_INGRESS_HTTPS_PORT:443}
+    # Deliberately NOT rigger.docker.socket: that is how the Rigger process reaches Docker and may be
+    # an npipe: pipe on Windows or a remote tcp: host. This is the path bind-mounted read-only into
+    # Traefik's Linux container on the node.
+    node-docker-socket: ${RIGGER_INGRESS_NODE_SOCKET:/var/run/docker.sock}
+    # Blank means no ACME, and `tls: true` then uses Traefik's own self-signed certificate — the only
+    # thing that can work on a single node with no public DNS name, which includes CI.
+    cert-resolver: ${RIGGER_INGRESS_CERT_RESOLVER:}
+    acme-email:    ${RIGGER_INGRESS_ACME_EMAIL:}
+    # Named volume for acme.json. Without persistence every restart re-requests certificates and
+    # Let's Encrypt rate-limits the domain — a failure that only surfaces weeks later.
+    acme-volume:   ${RIGGER_INGRESS_ACME_VOLUME:rigger-traefik-acme}
+    dashboard:     ${RIGGER_INGRESS_DASHBOARD:false}
+
   gitops:
     enabled:              ${RIGGER_GITOPS_ENABLED:false}
     repository:           ${RIGGER_GITOPS_REPO:}

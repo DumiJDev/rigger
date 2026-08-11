@@ -13,6 +13,9 @@ concurrency:
 env:
   # Short and explicit so a failure is about the code, not about a weak default tripping a guard.
   RIGGER_ADMIN_PASSWORD: ci-admin-password
+  # Ingress is off by default (it binds 80/443 on the node). CI turns it on because the only thing
+  # that proves routing works is a real HTTP request through Traefik.
+  RIGGER_INGRESS_ENABLED: 'true'
   RIGGER_JWT_KEY: ci-jwt-signing-key-at-least-32-chars-long
 
 jobs:
@@ -404,6 +407,98 @@ jobs:
           ADMIN_PASSWORD: ${{ env.RIGGER_ADMIN_PASSWORD }}
         run: node console.mjs
 
+      # Traefik ingress. The single assertion that matters here is the HTTP request through Traefik:
+      # every other check below was green while routing was completely dead, because Traefik <= 3.5
+      # pins Docker API 1.24 in its Swarm provider and cannot negotiate it, so on Engine 29 it starts,
+      # reports 1/1, answers HTTP and discovers nothing. A wrong label spelling fails the same silent
+      # way. Compilation, labels and networks prove nothing on their own.
+      - name: Traefik ingress routes traffic
+        run: |
+          set -e
+          T=$(cat /tmp/token)
+          fail=0
+          host=ci-ingress.rigger.test
+          api() { curl -sk -H "Authorization: Bearer $T" -H 'Content-Type: application/json' "$@"; }
+          apply() { api -X POST -o /dev/null -w '%{http_code}' \
+            "https://localhost:7433/api/v1/namespaces/default/apply" -d "$1"; }
+          route() { curl -s -o /dev/null -w '%{http_code}' -H "Host: $1" http://127.0.0.1/; }
+          until_route() { # host, expected, seconds
+            for i in $(seq 1 "$3"); do [ "$(route "$1")" = "$2" ] && return 0; sleep 1; done
+            return 1
+          }
+
+          svc() { printf '{"manifest":"apiVersion: rigger.io/v1\\nkind: Service\\nmetadata:\\n  name: ci-web-svc\\n  namespace: default\\nspec:\\n  type: LoadBalancer\\n  selector:\\n    app: ci-web\\n  ports:\\n    - port: 18080\\n      targetPort: 80\\n      protocol: TCP\\n%s"}' "$1"; }
+
+          echo "== network =="
+          net=$(docker network inspect rigger-ingress --format '{{.Driver}} {{.Scope}}')
+          echo "  $net"; [ "$net" = "overlay swarm" ] || fail=1
+
+          echo "== controller =="
+          for i in $(seq 1 40); do
+            reps=$(docker service ls --filter label=rigger.io/component=ingress-controller --format '{{.Replicas}}')
+            [ "$reps" = "1/1" ] && break; sleep 3
+          done
+          echo "  replicas=$reps"; [ "$reps" = "1/1" ] || fail=1
+          ctl=$(docker service inspect rigger-ingress-controller \
+            --format '{{index .Spec.Labels "rigger.io/managed"}}|{{(index .Spec.TaskTemplate.ContainerSpec.Mounts 0).ReadOnly}}|{{.Spec.TaskTemplate.Placement.Constraints}}')
+          echo "  managed|socketReadOnly|constraints = $ctl"
+          case "$ctl" in "|true|[node.role == manager]") ;; *) echo "  controller hardening wrong"; fail=1;; esac
+
+          echo "== ingress on the existing ci-web-svc =="
+          code=$(apply "$(svc '  ingress:\\n    host: '"$host"'\\n    tls: false\\n')")
+          echo "  apply -> $code"; [ "$code" = "200" ] || fail=1
+
+          echo "== labels and network attachment =="
+          for i in $(seq 1 30); do
+            rule=$(docker service inspect rigger-default-ci-web \
+              --format '{{index .Spec.Labels "traefik.http.routers.rigger-default-ci-web-svc.rule"}}' 2>/dev/null || true)
+            [ -n "$rule" ] && break; sleep 3
+          done
+          echo "  rule=$rule"
+          [ "$rule" = "Host(\`$host\`)" ] || { echo "  router rule wrong"; fail=1; }
+          docker service inspect rigger-default-ci-web --format '{{.Spec.Labels}}' | grep -q 'traefik.docker.' \
+            && { echo "  v2 label spelling emitted — fails silently with a 404"; fail=1; } || true
+          netid=$(docker network inspect -f '{{.Id}}' rigger-ingress)
+          # Docker echoes the network ID back, not the name: comparing to the name silently passes nothing.
+          docker service inspect rigger-default-ci-web --format '{{.Spec.TaskTemplate.Networks}}' | grep -q "$netid" \
+            || { echo "  network not attached by ID"; fail=1; }
+
+          echo "== THE PROOF: HTTP through Traefik =="
+          # 15s reconcile + ~15s Traefik provider refresh + task recreation from the network change.
+          until_route "$host" 200 120 && echo "  $host -> 200" || { echo "  $host -> $(route $host) after 120s"; fail=1; }
+          echo "  unknown host -> $(route nope.rigger.test) (expect 404)"
+
+          echo "== labels, network and published ports survive an unrelated update =="
+          echo y | java -jar artifacts/riggerctl.jar scale deployment ci-web --replicas=2 -n default -i
+          sleep 25
+          docker service inspect rigger-default-ci-web --format '{{.Spec.EndpointSpec.Ports}}' | grep -q 18080 \
+            || { echo "  published ports wiped by the update"; fail=1; }
+          docker service inspect rigger-default-ci-web --format '{{.Spec.Labels}}' | grep -q 'traefik.enable' \
+            || { echo "  traefik labels wiped by the update"; fail=1; }
+          until_route "$host" 200 90 && echo "  routing after scale -> 200" || { echo "  routing broken after scale"; fail=1; }
+
+          echo "== convergence, both directions =="
+          # Stable: an unstable spec-hash makes the version index climb forever.
+          a=$(docker service inspect rigger-default-ci-web --format '{{.Version.Index}}')
+          sleep 45
+          b=$(docker service inspect rigger-default-ci-web --format '{{.Version.Index}}')
+          echo "  version index $a -> $b"; [ "$a" = "$b" ] || { echo "  still updating"; fail=1; }
+          # And responsive: a hash that omits the binding never applies a change at all. Each of those
+          # two bugs passes the other's test, so both directions are required.
+          apply "$(svc '  ingress:\\n    host: ci2.rigger.test\\n    tls: false\\n')" >/dev/null
+          until_route ci2.rigger.test 200 120 && echo "  new host -> 200" || { echo "  host change never applied"; fail=1; }
+
+          echo "== removing the ingress =="
+          apply "$(svc '')" >/dev/null
+          sleep 25
+          docker service inspect rigger-default-ci-web --format '{{.Spec.Labels}}' | grep -q 'traefik.enable' \
+            && { echo "  traefik labels not removed"; fail=1; } || true
+          docker service inspect rigger-default-ci-web --format '{{.Spec.EndpointSpec.Ports}}' | grep -q 18080 \
+            || { echo "  removing the ingress also dropped the published ports"; fail=1; }
+          # Traefik's own refresh lags the label removal by roughly one poll, so this must retry.
+          until_route ci2.rigger.test 404 60 && echo "  host now 404" || { echo "  host still routed"; fail=1; }
+          exit $fail
+
       - name: Delete resources through the API
         if: always()
         run: |
@@ -411,11 +506,19 @@ jobs:
           for r in "deployment ci-web" "service ci-web-svc" "configmap ci-cm"; do
             echo y | $CLI delete $r -n default -i || true
           done
+          # Filtered by the managed label on purpose: rigger-ingress-controller is deliberately NOT
+          # labelled `rigger.io/managed=true` (otherwise DeploymentController would GC it every 15s),
+          # so it stays up for the whole run and an unfiltered drain check would report a phantom leak
+          # forever.
           for i in $(seq 1 30); do
-            [ -z "$(docker service ls -q)" ] && [ -z "$(docker config ls -q)" ] && break
+            [ -z "$(docker service ls --filter label=rigger.io/managed=true -q)" ] \
+              && [ -z "$(docker config ls -q)" ] && break
             sleep 4
           done
-          echo "services left: $(docker service ls -q | wc -l), configs left: $(docker config ls -q | wc -l)"
+          echo "managed services left: $(docker service ls --filter label=rigger.io/managed=true -q | wc -l)," \
+               "configs left: $(docker config ls -q | wc -l)"
+          # And the controller must still be there — that is the regression test for the label rule.
+          docker service ls --filter label=rigger.io/component=ingress-controller --format '{{.Name}} {{.Replicas}}'
 
       - name: Upload diagnostics
         if: failure()

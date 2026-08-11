@@ -126,6 +126,9 @@ public class WorkloadController {
             if ("Secret".equals(manifest.kind()) && spec instanceof SecretSpec secretSpec) {
                 spec = encryptSecretData(secretSpec);
             }
+            if (spec instanceof ServiceSpec serviceSpec && serviceSpec.ingress() != null) {
+                rejectIfHostClaimed(namespace, manifest.metadata().name(), serviceSpec.ingress().host());
+            }
 
             String specJson  = mapper.writeValueAsString(spec);
             String labelsJson = mapper.writeValueAsString(manifest.metadata().labels());
@@ -514,6 +517,41 @@ public class WorkloadController {
     }
 
     /** Encrypts every value in a Secret's data map. Never called on read paths. */
+    /**
+     * Refuses an ingress host already claimed by a Service in another namespace.
+     *
+     * <p>Ingress hosts are cluster-wide while RBAC is namespaced, so without this a DEPLOYER scoped
+     * to one namespace could claim another team's hostname with an ordinary apply and Traefik would
+     * pick a router non-deterministically — a cross-namespace traffic hijack needing no extra
+     * privilege. {@code ServiceBindingResolver} also defends at reconcile time by letting the
+     * lowest-sorting claim win, but that only takes effect after the apply has already succeeded;
+     * telling the caller no is the better answer.
+     *
+     * <p>Deliberately a plain store query and deliberately NOT routed through RBAC: a caller has to
+     * be told the host is taken, and by whom, without being granted read access to the namespace
+     * that holds it.
+     */
+    private void rejectIfHostClaimed(String namespace, String name, String host) {
+        for (var other : store.findAllByKind("Service")) {
+            if (other.getNamespace().equals(namespace) && other.getName().equals(name)) continue;
+            try {
+                var otherSpec = mapper.readValue(other.getSpecJson(), ServiceSpec.class);
+                if (otherSpec.ingress() != null && host.equals(otherSpec.ingress().host())) {
+                    throw new ManifestValidationException(List.of(
+                        "spec.ingress.host '" + host + "' is already claimed by Service "
+                            + other.getNamespace() + "/" + other.getName()
+                            + " — ingress hosts are cluster-wide, not namespaced"));
+                }
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                // An unreadable stored spec cannot be compared. Skipping it is right here: refusing
+                // every apply because some unrelated row is corrupt would be worse, and
+                // ServiceBindingResolver warns about it on the reconcile path.
+                log.debug("Skipping unreadable Service spec {}/{} during ingress host check: {}",
+                    other.getNamespace(), other.getName(), e.getMessage());
+            }
+        }
+    }
+
     private SecretSpec encryptSecretData(SecretSpec spec) {
         if (spec.data() == null || spec.data().isEmpty()) return spec;
         var encrypted = new LinkedHashMap<String, String>();

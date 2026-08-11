@@ -238,6 +238,56 @@ provisioning (`cluster up`/`sync` are never exercised), and HPA scaling under lo
   This property previously existed and had **no callers at all** — a flag that silently does nothing
   is worse than no flag.
 
+- **Ingress is fields on the Service kind** (`spec.ingress.host/path/tls`), not a new kind. Honoured
+  only for `LoadBalancer`; `ManifestValidator` rejects it on `ClusterIP` rather than ignoring it.
+  `ServiceSpec` keeps an explicit 3-argument constructor so `ComposeConverter` still compiles.
+- **Rigger provisions Traefik itself.** `TraefikController` runs in the reconciliation loop,
+  sequentially and first, because it creates the overlay network the workload controllers attach to.
+  Traefik is built as a raw Swarm service rather than a Rigger Deployment because it needs the Docker
+  socket bind-mounted and a manager constraint — and `DeploymentSpec` deliberately has **no volumes
+  field**: adding one would let any namespace-scoped DEPLOYER bind-mount `/var/run/docker.sock` and
+  own the cluster. Volumes are a legitimate future feature, but they need an allowlist and an RBAC
+  design of their own, not a side entrance opened to bootstrap an ingress.
+- **The controller must never carry `rigger.io/managed=true`.** `DeploymentController` deletes managed
+  services with no store row, so it would be garbage-collected within 15s. It carries
+  `rigger.io/component=ingress-controller` instead, and there is a comment on the constant saying so
+  because the next person will "helpfully" add it.
+- **Traefik v3.6 is the practical minimum, and this is the single most valuable thing learned here.**
+  Traefik ≤ 3.5 pins Docker API version 1.24 in its Swarm provider and cannot negotiate it; Engine 29
+  requires ≥ 1.40. Traefik still starts, still reports `1/1`, still answers HTTP — and discovers
+  nothing, so every host returns 404. `DOCKER_API_VERSION` does not help; the pin is in Traefik's
+  code. Measured against Engine 29.6.1: v3.4 fails, v3.5 fails, v3.6 works. **Every other check was
+  green while routing was completely dead** — the overlay network, the label set, the attachment by
+  ID, the replica count. Only `curl -H 'Host: …' http://127.0.0.1/` through Traefik found it, which
+  is also the only thing that catches a v2 label spelling (`traefik.docker.*` fails the same silent
+  way). Use `traefik.swarm.*` and `providers.swarm` only.
+- **Single writer per Swarm service.** `ServiceController` no longer writes anything — it only warns
+  about Services selecting nothing. `ServiceAdapter.updatePublishedPorts` is deleted and the
+  `existing.getEndpointSpec()` graft in `update()` is gone. Published ports, Traefik labels and the
+  network attachment all originate inside `buildServiceSpec()` from a `ServiceBinding` resolved
+  **once per cycle** by `ServiceBindingResolver` and shared between the hash lambda and the
+  create/update call. Two controllers writing the same service concurrently is what wiped published
+  ports before; the same race would have made Traefik labels vanish at random.
+- **Binding resolution is deterministic by contract, not by tidiness.** Service→Deployment matches and
+  duplicate ingress-host claims are both resolved by sorted tie-break, because an unstable spec-hash
+  makes the Swarm version index climb forever. That bug and its opposite — a hash that omits the
+  binding, so a change never applies — each pass the other's test, which is why CI asserts
+  convergence in **both** directions.
+- `ResourceDiffer`'s unused 2-argument `diff()` overload is **deleted**; it hashed with a divergent
+  `spec.hashCode()`. There is no 2-argument `computeSpecHash` either. Two entry points to a hash
+  function is exactly how reconciliation broke once already.
+- `buildLabels()` now applies `metadata.labels` **first**, so `rigger.io/*` and `traefik.*` always
+  win. A user label named `rigger.io/spec-hash` could previously freeze reconciliation.
+- **Ingress hosts are cluster-wide while RBAC is namespaced**, so `WorkloadController.apply()` refuses
+  a host already claimed by a Service in another namespace, and `ServiceBindingResolver` also lets the
+  lowest-sorting claim win at reconcile time. Without this, a DEPLOYER in one namespace could hijack
+  another team's hostname with an ordinary apply. That check is a plain store query and deliberately
+  **not** routed through RBAC: the caller must be told the host is taken, and by whom, without gaining
+  read access to the namespace holding it.
+- Adding an ingress to a Service **restarts that app's tasks**, because changing
+  `TaskTemplate.Networks` makes Swarm recreate them. Attachment happens only when an ingress is
+  configured, so enabling the feature does not restart every workload in the cluster.
+
 ## Security model (current state)
 
 - **Passwords**: BCrypt (`PasswordEncoder` bean in `SecurityAutoConfiguration`, injected into
@@ -329,10 +379,10 @@ Remaining gaps are feature-completion and polish:
 - `DELETE` can return a generic 500 on `SQLITE_BUSY` (`CannotAcquireLockException`) when
   reconciliation is writing at the same moment. It succeeds on retry. Deserves a retry or a 409
   rather than reading as a server fault.
-- `rigger-operator`'s `ServiceController.reconcile()` (MVP, Fase 2.7): resolves the target
-  Deployment by selector match and republishes `LoadBalancer` ports via `EndpointSpec`/
-  `PortConfig`; `ClusterIP` stays a no-op since Swarm's overlay DNS already covers it. Full
-  ingress-controller-grade routing remains out of scope.
+- `ServiceController` no longer writes to Swarm at all — see the single-writer decision above.
+  Published ports now flow through the Deployment path from a resolved `ServiceBinding`; the
+  controller only warns about Services whose selector matches nothing. `ClusterIP` remains a no-op
+  because Swarm's overlay DNS already covers it.
 - `ConfigMapController` (Fase 2.8) now creates a new, uniquely-named Docker Config version on
   content change instead of updating in place (Configs are immutable once created). Referencing
   Deployments pick up the new version on their own next reconciliation cycle — `ServiceAdapter`
@@ -441,8 +491,10 @@ need runtime convergence checks, not just "does it compile":
 ## Out of scope (do not re-litigate without a fresh decision)
 
 - Real mTLS / client-certificate authentication.
-- Ingress-controller-grade Service routing (path routing, TLS termination, vhosts) — Service
-  reconciliation should stay to Swarm published-port mapping.
+- Ingress beyond host-based HTTP routing. `spec.ingress` covers host, path and TLS through a
+  Rigger-provisioned Traefik; middlewares, rate limiting, auth forwarding and multi-backend
+  weighting are not in scope. (Host routing itself WAS out of scope until the user asked for it —
+  this line is the remaining boundary, not a ban on the feature.)
 - GraalVM native-image packaging for `riggerctl`.
 - Multi-instance/HA `rigger-server` (single-instance, SQLite-backed operator is the model).
 - A RBAC administration UI (only the enforcement mechanism is in scope for hardening).

@@ -37,7 +37,16 @@ public class IngressProperties {
     /** Overlay network shared by Traefik and every ingress-exposed workload. */
     private String network = "rigger-ingress";
 
-    private String image = "traefik:v3.3";
+    /**
+     * Traefik image. <strong>v3.6 is the practical minimum.</strong> Traefik up to and including
+     * v3.5 pins Docker API version 1.24 in its Swarm provider and cannot negotiate it — Docker Engine
+     * 29 raised its minimum supported API version to 1.40, so on such a host the provider fails with
+     * {@code client version 1.24 is too old} on every retry. Traefik still starts, still reports 1/1
+     * replicas and still answers HTTP; it simply discovers nothing and 404s every host. Setting
+     * {@code DOCKER_API_VERSION} in its environment does not help — the pin is in code. Verified
+     * against Engine 29.6.1: v3.4 and v3.5 fail, v3.6 works.
+     */
+    private String image = "traefik:v3.6";
 
     /** Traefik entrypoint names. Referenced by the router labels, so they must match the args. */
     private String entryPoint    = "web";
@@ -74,18 +83,6 @@ public class IngressProperties {
      */
     private String nodeDockerSocket = "/var/run/docker.sock";
 
-    /**
-     * Value of {@code DOCKER_API_VERSION} in Traefik's container. Blank (the default) means
-     * auto-detect from the daemon Rigger itself is talking to.
-     *
-     * <p><strong>Not optional in practice.</strong> Traefik 3.3's Swarm provider builds its Docker
-     * client without API-version negotiation and defaults to <em>1.24</em>, which every modern daemon
-     * rejects outright ({@code client version 1.24 is too old. Minimum supported API version is
-     * 1.40}). Traefik still starts, still reports 1/1 replicas and still answers HTTP — it simply
-     * discovers no services, so every request 404s. Exactly the failure mode that only a real HTTP
-     * request can detect.
-     */
-    private String dockerApiVersion = "";
 
     @PostConstruct
     void warnOnUnmountableSocket() {
@@ -136,6 +133,4 @@ public class IngressProperties {
     public void setDashboard(boolean dashboard) { this.dashboard = dashboard; }
     public String getNodeDockerSocket() { return nodeDockerSocket; }
     public void setNodeDockerSocket(String nodeDockerSocket) { this.nodeDockerSocket = nodeDockerSocket; }
-    public String getDockerApiVersion() { return dockerApiVersion; }
-    public void setDockerApiVersion(String v) { this.dockerApiVersion = v == null ? "" : v.trim(); }
 }
