@@ -18,6 +18,22 @@
 #     --group-add "$(stat -c %g /var/run/docker.sock)" \
 #     --memory 1g \
 #     rigger:local
+#
+# Same image, PostgreSQL instead of the default SQLite (see StoreAutoConfiguration — the
+# datasource bean is picked by RIGGER_STORE_TYPE, no image or profile difference):
+#   docker run -d --name rigger \
+#     -p 7433:7433 \
+#     -e RIGGER_ADMIN_PASSWORD=... -e RIGGER_JWT_KEY=<>=32 chars> \
+#     -e RIGGER_ATTACH_EXISTING_SWARM=true \
+#     -e RIGGER_STORE_TYPE=postgresql \
+#     -e RIGGER_DB_HOST=postgres -e RIGGER_DB_PORT=5432 \
+#     -e RIGGER_DB_NAME=rigger -e RIGGER_DB_USER=rigger -e RIGGER_DB_PASSWORD=... \
+#     -v /var/run/docker.sock:/var/run/docker.sock \
+#     --group-add "$(stat -c %g /var/run/docker.sock)" \
+#     --memory 1g \
+#     rigger:local
+# (drop -v rigger-state:/var/lib/rigger — nothing is written there in postgresql mode. See
+#  docker-compose.postgres.yml for a runnable local example with both containers.)
 
 # ---------------------------------------------------------------------------
 # Build stage

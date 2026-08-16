@@ -1,8 +1,11 @@
 package io.rigger.store.config;
 
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.hibernate.autoconfigure.HibernatePropertiesCustomizer;
 import org.springframework.boot.persistence.autoconfigure.EntityScan;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
@@ -14,8 +17,12 @@ import org.sqlite.SQLiteDataSource;
 
 /**
  * Auto-configuration for the Rigger store.
- * Activates SQLite datasource when rigger.store.type=sqlite (the default).
- * When rigger.store.type=postgresql, Spring Boot's own datasource auto-config takes over.
+ *
+ * <p>Both the datasource and the Hibernate dialect are picked by beans conditional on
+ * {@code rigger.store.type} (sqlite, the default, or postgresql) — a scan of the environment at
+ * startup, not a Spring profile. Deliberately not profile-based: a profile would mean a second
+ * {@code application-*.yaml} to keep in sync with the base config, where a conditional bean here
+ * is the exact same mechanism the SQLite datasource already used, just extended to a second value.
  */
 @AutoConfiguration
 @EnableJpaRepositories(basePackages = "io.rigger.store.repository")
@@ -50,5 +57,36 @@ public class StoreAutoConfiguration {
         // WAL mode: allows concurrent reads while a write is in progress
         ds.setJournalMode("WAL");
         return ds;
+    }
+
+    /**
+     * Pooled Postgres datasource. Unlike SQLite (a single file, one writer at a time, no pool),
+     * Postgres is a real server and benefits from connection pooling — Hikari is already on the
+     * classpath transitively via {@code spring-boot-starter-data-jpa}, so this needs nothing extra
+     * beyond the driver itself.
+     */
+    @Bean
+    @ConditionalOnProperty(name = "rigger.store.type", havingValue = "postgresql")
+    @ConditionalOnMissingBean(DataSource.class)
+    public DataSource postgresDataSource(StoreProperties props) {
+        var config = new HikariConfig();
+        config.setJdbcUrl("jdbc:postgresql://" + props.getHost() + ":" + props.getPort()
+            + "/" + props.getDatabase());
+        config.setUsername(props.getUsername());
+        config.setPassword(props.getPassword());
+        config.setDriverClassName("org.postgresql.Driver");
+        return new HikariDataSource(config);
+    }
+
+    /**
+     * SQLite's dialect lives in {@code hibernate-community-dialects} and is never auto-detected
+     * from the JDBC connection — it has to be named explicitly. Postgres needs no equivalent
+     * customizer: {@code PostgreSQLDialect} ships in {@code hibernate-core} and Hibernate resolves
+     * it on its own from the live connection's product name.
+     */
+    @Bean
+    @ConditionalOnProperty(name = "rigger.store.type", havingValue = "sqlite", matchIfMissing = true)
+    public HibernatePropertiesCustomizer sqliteDialectCustomizer() {
+        return props -> props.put("hibernate.dialect", "org.hibernate.community.dialect.SQLiteDialect");
     }
 }

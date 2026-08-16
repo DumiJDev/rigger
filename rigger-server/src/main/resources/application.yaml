@@ -39,16 +39,20 @@ spring:
     # needed concurrency already gets it explicitly — ReconciliationLoop, MetricsSampler and
     # DockerStatsMetricsSource each fan out over Executors.newVirtualThreadPerTaskExecutor().
   jpa:
-    database-platform: org.hibernate.community.dialect.SQLiteDialect
+    # No database-platform/dialect fixed here — StoreAutoConfiguration's HibernatePropertiesCustomizer
+    # beans set it conditionally on rigger.store.type instead (SQLite's community dialect needs
+    # naming explicitly; PostgreSQLDialect ships in hibernate-core and is auto-detected).
     hibernate:
       ddl-auto: validate
     show-sql: false
-  datasource:
-    url:                  jdbc:sqlite:${rigger.store.path:./rigger-state.db}
-    driver-class-name:    org.sqlite.JDBC
+  # No datasource.url/driver-class-name here: StoreAutoConfiguration always defines its own
+  # DataSource bean (sqlite or postgresql, chosen by rigger.store.type), so Boot's own
+  # datasource auto-config — which is what would read these properties — never runs.
   flyway:
     enabled:   true
-    locations: classpath:db/migration
+    # {vendor} is a built-in Flyway placeholder resolved from the live JDBC connection's product
+    # name (sqlite / postgresql) — picks the matching db/migration/<vendor>/ folder with no code.
+    locations: classpath:db/migration/{vendor}
 
 management:
   endpoints:
@@ -76,8 +80,14 @@ management:
 
 rigger:
   store:
-    type: sqlite
+    type: ${RIGGER_STORE_TYPE:sqlite}
     path: ${RIGGER_DB_PATH:./rigger-state.db}
+    # Only read when type=postgresql (RIGGER_STORE_TYPE=postgresql) — see StoreAutoConfiguration.
+    host:     ${RIGGER_DB_HOST:localhost}
+    port:     ${RIGGER_DB_PORT:5432}
+    database: ${RIGGER_DB_NAME:rigger}
+    username: ${RIGGER_DB_USER:rigger}
+    password: ${RIGGER_DB_PASSWORD:}
 
   security:
     masterKey:          ${RIGGER_MASTER_KEY:}

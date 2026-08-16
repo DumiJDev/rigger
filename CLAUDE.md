@@ -206,12 +206,47 @@ provisioning (`cluster up`/`sync` are never exercised), and HPA scaling under lo
   `spring-boot-starter-flyway`. With bare `flyway-core` the migrations silently never run and
   startup then dies on Hibernate schema validation (`missing table [audit_log]`) against an empty
   database — a confusing failure that points at JPA rather than the real cause.
-- **Database**: SQLite via Spring Data JPA + Flyway, WAL mode. Hibernate needs
+- **Database**: SQLite (default) via Spring Data JPA + Flyway, WAL mode. Hibernate needs
   `org.hibernate.community.dialect.SQLiteDialect` (from `hibernate-community-dialects`,
   added to `rigger-server`'s pom) since SQLite has no first-party Hibernate dialect.
   JPA entities mapping to `TEXT`/`INTEGER`-typed SQLite columns (timestamps, booleans) must
   set `columnDefinition` explicitly to match — Hibernate's schema *validate* mode is strict
   about this even though SQLite itself is dynamically typed.
+- **PostgreSQL is a supported alternative**, selected with `RIGGER_STORE_TYPE=postgresql` (plus
+  `RIGGER_DB_HOST`/`_PORT`/`_NAME`/`_USER`/`_PASSWORD`) — still single-instance, just a different
+  backend. Deliberately **not** a Spring profile: `StoreAutoConfiguration` picks the datasource
+  with a second `@Bean` conditional on the same `rigger.store.type` property the SQLite bean
+  already used (`havingValue = "postgresql"`), building a pooled `HikariDataSource` directly (SQLite
+  has no pool — one file, one writer — Postgres gets one because it's a real server). No
+  `application-postgresql.yaml` exists; the system self-selects from the environment, matching the
+  one mechanism this project already had.
+  - **Migrations live in `db/migration/sqlite/` and `db/migration/postgresql/`**, chosen entirely
+    by Flyway's own `{vendor}` placeholder in `spring.flyway.locations` (resolved from the live
+    JDBC connection's product name) — no Java code decides the folder. The Postgres tree mirrors
+    the SQLite one table-for-table but uses native types where SQLite had to fake them: `BOOLEAN`
+    instead of an `INTEGER` 0/1 flag, `TIMESTAMPTZ` instead of a formatted `TEXT` string, and
+    **`DOUBLE PRECISION` instead of `REAL`** for `metric_samples.value` — SQLite's `REAL` is
+    already an 8-byte double, but Postgres's `REAL` is a 4-byte float; keeping `REAL` would have
+    silently halved the precision of every metric sample.
+  - **The JPA entities are untouched** — same `columnDefinition = "TEXT"/"INTEGER"` on both paths.
+    Verified empirically (not just reasoned about): started `rigger-server` against a real
+    `postgres:16` container with `ddl-auto: validate` unchanged, and it validated cleanly against
+    the native `TIMESTAMPTZ`/`BOOLEAN` columns, applied a resource, and read it back correctly
+    after a restart. `columnDefinition` only affects DDL generation and Hibernate's own validate
+    bookkeeping, never the runtime JDBC bind — which follows the Java field type, not that string.
+  - `PostgreSQLDialect` needs **no dialect customizer and no extra dependency** — it ships in
+    `hibernate-core` and Hibernate auto-detects it from the live connection (confirmed in the same
+    run: `Database dialect: PostgreSQLDialect` with zero `spring.jpa.database-platform` set).
+    SQLite's community dialect still needs one, since it's never auto-detected — see
+    `StoreAutoConfiguration.sqliteDialectCustomizer()`.
+  - Flyway 10+ split per-database support out of `flyway-core`; SQLite still works through the
+    core module alone, but Postgres needs `org.flywaydb:flyway-database-postgresql` too (found the
+    hard way — omitting it fails at startup with `Unsupported Database: PostgreSQL`, not a
+    dependency-resolution error, so it looks unrelated to the missing jar).
+  - **Not covered by CI** — same as the Docker image, verified by hand for this change only
+    (`docker-compose.postgres.yml` reproduces the manual test). Multi-instance/HA still is not the
+    model even with Postgres — see Out of Scope: the cluster-wide orphan-reconciliation hazard is
+    about the operator, not the datastore.
 - **Brand assets live in `rigger-console/public/brand/`** with their own README, which is the place
   to read before touching them. Three traps worth knowing here too: `currentColor` only inherits in
   *inline* SVG, so `<img>` and favicon use needs colour-explicit copies; an XML comment cannot contain

@@ -1,0 +1,48 @@
+# Local dev/test convenience: Rigger + PostgreSQL, instead of the SQLite default.
+# Not used by CI — see CLAUDE.md's Database section for why the Postgres path is verified by hand.
+#
+# Build the image first: docker build -t rigger:local .
+# Then:                   docker compose -f docker-compose.postgres.yml up
+#
+# Needs Docker Swarm active on the host and its socket bind-mounted (same requirement as the plain
+# SQLite docker run documented at the top of the Dockerfile) — this compose file does not set up
+# Swarm itself.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: rigger
+      POSTGRES_PASSWORD: rigger-dev-password
+      POSTGRES_DB: rigger
+    volumes:
+      - rigger-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rigger"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rigger:
+    image: rigger:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "7433:7433"
+    environment:
+      RIGGER_STORE_TYPE: postgresql
+      RIGGER_DB_HOST: postgres
+      RIGGER_DB_PORT: "5432"
+      RIGGER_DB_NAME: rigger
+      RIGGER_DB_USER: rigger
+      RIGGER_DB_PASSWORD: rigger-dev-password
+      RIGGER_ADMIN_PASSWORD: rigger-dev-admin
+      RIGGER_JWT_KEY: dev-only-change-me-32-characters-min
+      RIGGER_ATTACH_EXISTING_SWARM: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-999}" # set to `stat -c %g /var/run/docker.sock` on the host if 999 mismatches
+
+volumes:
+  rigger-postgres-data:
