@@ -61,6 +61,11 @@ public class EventPersistenceListener {
             case PodFailedEvent ev -> build(ev, "Pod", ev.podName(), ev.namespace(), ev.nodeName(),
                 "Pod failed (exit %s): %s".formatted(ev.exitCode(), ev.message()));
 
+            // Backs the pods SSE stream (NamespaceSseHub, rigger-api), not the activity feed: it
+            // fires on ordinary rolling updates and scaling, not just noteworthy events, and would
+            // bury the real ones the same way a quiet reconciliation cycle would.
+            case PodStateChangedEvent ev -> null;
+
             case NodeAddedEvent ev -> build(ev, "Node", ev.nodeName(), null, null,
                 "Node joined as %s (%s)".formatted(ev.role(), ev.ip()));
 

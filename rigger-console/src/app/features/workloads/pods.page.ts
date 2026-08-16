@@ -5,6 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
 import { PodResponse } from '../../core/api.models';
+import { LiveUpdateService } from '../../core/live-update.service';
 import { LogStreamService } from '../../core/log-stream.service';
 import { NamespaceService } from '../../core/namespace.service';
 import { RefreshService } from '../../core/refresh.service';
@@ -24,6 +25,7 @@ export class PodsPage {
   private readonly api = inject(ApiService);
   private readonly ns = inject(NamespaceService);
   private readonly refresh = inject(RefreshService);
+  private readonly live = inject(LiveUpdateService);
   private readonly logs = inject(LogStreamService);
   readonly auth = inject(AuthService);
 
@@ -48,10 +50,18 @@ export class PodsPage {
   });
 
   constructor() {
-    effect(() => {
+    effect((onCleanup) => {
       const namespace = this.ns.current();
+      // Kept as a fallback: if the SSE connection below drops silently, the page still catches up
+      // within one polling interval instead of going stale forever.
       this.refresh.tick();
       void this.load(namespace);
+
+      const stop = this.live.watch(
+        `/api/v1/namespaces/${encodeURIComponent(namespace)}/pods/stream`,
+        () => void this.load(namespace),
+      );
+      onCleanup(stop);
     });
   }
 

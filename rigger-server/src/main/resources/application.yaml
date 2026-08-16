@@ -22,15 +22,15 @@ spring:
   task:
     scheduling:
       # Spring Boot's default is ONE thread for every @Scheduled method in the application, and
-      # Rigger has five of them (reconcile 15s, HPA 30s, metrics sample 30s, metrics prune 1h,
-      # GitOps poll 60s). Several block for seconds on the Docker Engine — one `statsCmd` per
-      # running container, ~1.2s each measured — so on a single thread they queue behind each other
-      # and every configured interval becomes a lie: with 4 Deployments x 2 replicas the reconcile
-      # loop was observed running every 24-26s against its configured 15s, because it waited for
-      # the HPA and sampler ticks ahead of it. One thread per scheduled method means none of them
-      # can ever delay another.
+      # Rigger has six of them (reconcile 15s, HPA 30s, metrics sample 30s, metrics prune 1h,
+      # GitOps poll 60s, pod watch 15s). Several block for seconds on the Docker Engine — one
+      # `statsCmd` per running container, ~1.2s each measured — so on a single thread they queue
+      # behind each other and every configured interval becomes a lie: with 4 Deployments x 2
+      # replicas the reconcile loop was observed running every 24-26s against its configured 15s,
+      # because it waited for the HPA and sampler ticks ahead of it. One thread per scheduled
+      # method means none of them can ever delay another.
       pool:
-        size: ${RIGGER_SCHEDULER_POOL_SIZE:5}
+        size: ${RIGGER_SCHEDULER_POOL_SIZE:6}
     # NOT setting spring.threads.virtual.enabled, deliberately. It would replace the pool above
     # with a SimpleAsyncTaskScheduler, making the size setting silently inert, and this project
     # supports any JDK 21+: on 21-23 a virtual thread that blocks inside a `synchronized` block

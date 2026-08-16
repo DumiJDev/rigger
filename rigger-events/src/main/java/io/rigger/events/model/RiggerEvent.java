@@ -14,7 +14,7 @@ import java.time.Instant;
  */
 public abstract sealed class RiggerEvent
     permits ResourceAppliedEvent, ResourceDeletedEvent, ResourceScaledEvent,
-            PodFailedEvent, NodeAddedEvent, NodeDrainedEvent,
+            PodFailedEvent, PodStateChangedEvent, NodeAddedEvent, NodeDrainedEvent,
             HpaScaledEvent, ReconciliationEvent, GitOpsSyncEvent {
 
     private final String eventId;

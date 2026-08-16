@@ -2,6 +2,7 @@ package io.rigger.api.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.rigger.api.dto.*;
+import io.rigger.api.stream.NamespaceSseHub;
 import io.rigger.api.stream.SseLineFramingOutputStream;
 import io.rigger.core.domain.resource.*;
 import io.rigger.core.domain.security.*;
@@ -54,6 +55,7 @@ public class WorkloadController {
     private final ConfigAdapter        configAdapter;
     private final SecretAdapter        secretAdapter;
     private final SecretEncryptor      secretEncryptor;
+    private final NamespaceSseHub      sseHub;
     private final ObjectMapper         mapper = new ObjectMapper();
 
     public WorkloadController(ResourceRepository store, ManifestParser parser,
@@ -62,7 +64,7 @@ public class WorkloadController {
                                RbacPolicyEngine rbac, AuditService audit,
                                RiggerEventBus eventBus, ServiceAdapter swarmAdapter,
                                ConfigAdapter configAdapter, SecretAdapter secretAdapter,
-                               SecretEncryptor secretEncryptor) {
+                               SecretEncryptor secretEncryptor, NamespaceSseHub sseHub) {
         this.store = store; this.parser = parser;
         this.composeConverter = composeConverter;
         this.schemaValidator = schemaValidator;
@@ -70,6 +72,7 @@ public class WorkloadController {
         this.eventBus = eventBus; this.swarmAdapter = swarmAdapter;
         this.configAdapter = configAdapter; this.secretAdapter = secretAdapter;
         this.secretEncryptor = secretEncryptor;
+        this.sseHub = sseHub;
     }
 
     // ── Apply ──────────────────────────────────────────────────────────────
@@ -271,6 +274,30 @@ public class WorkloadController {
     }
 
     /**
+     * Pushes a ping whenever a pod's state changes (via {@code PodWatcher}) or a Deployment in
+     * this namespace is applied/deleted/scaled (which changes pod count), so the console can
+     * refetch {@link #listPods} instead of waiting on its polling interval.
+     *
+     * <p>A denied {@link AccessDeniedException} is caught here rather than left to
+     * {@code GlobalExceptionHandler}: its JSON error body can't be negotiated against a request
+     * whose {@code Accept} is {@code text/event-stream} only, which turned a legitimate 403 into a
+     * 500 — found by actually opening this stream as a namespace-scoped VIEWER against a foreign
+     * namespace, not by compiling or unit-testing it. {@link #podLogsSse} below has the same fix
+     * for the same reason.
+     */
+    @GetMapping("/pods/stream")
+    public ResponseEntity<SseEmitter> podsStream(
+            @PathVariable String namespace, HttpServletRequest req) {
+        var ctx = ctx(req, namespace);
+        try {
+            rbac.authorize(ctx, "get", "Pod");
+        } catch (AccessDeniedException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        return ResponseEntity.ok(sseHub.subscribePods(namespace));
+    }
+
+    /**
      * Plain-text chunked log stream. This is what {@code riggerctl logs} reads (newline-delimited
      * bytes via Okio), so its framing must not change.
      */
@@ -303,7 +330,15 @@ public class WorkloadController {
             @RequestParam(defaultValue = "false") boolean follow,
             HttpServletRequest req) {
 
-        String containerId = authorizeAndResolveContainer(namespace, podName, req);
+        String containerId;
+        try {
+            containerId = authorizeAndResolveContainer(namespace, podName, req);
+        } catch (AccessDeniedException e) {
+            // See podsStream above: a denied AccessDeniedException can't be JSON-negotiated
+            // against this endpoint's text/event-stream-only Accept header, so it must be caught
+            // here rather than left to GlobalExceptionHandler.
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         if (containerId == null) return ResponseEntity.notFound().build();
         return ResponseEntity.ok(sseLogs(namespace, podName, containerId, follow));
     }

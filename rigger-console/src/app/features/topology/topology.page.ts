@@ -3,6 +3,7 @@ import { TranslocoDirective } from '@jsverse/transloco';
 import { firstValueFrom } from 'rxjs';
 import { ApiService } from '../../core/api.service';
 import { Topology, TopologyEdge, TopologyNode } from '../../core/api.models';
+import { LiveUpdateService } from '../../core/live-update.service';
 import { NamespaceService } from '../../core/namespace.service';
 import { RefreshService } from '../../core/refresh.service';
 import { DataState } from '../../shared/data-state';
@@ -44,6 +45,7 @@ export class TopologyPage {
   private readonly api = inject(ApiService);
   private readonly ns = inject(NamespaceService);
   private readonly refresh = inject(RefreshService);
+  private readonly live = inject(LiveUpdateService);
 
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
@@ -88,10 +90,18 @@ export class TopologyPage {
   });
 
   constructor() {
-    effect(() => {
+    effect((onCleanup) => {
       const namespace = this.ns.current();
+      // Kept as a fallback: if the SSE connection below drops silently, the page still catches up
+      // within one polling interval instead of going stale forever.
       this.refresh.tick();
       void this.load(namespace);
+
+      const stop = this.live.watch(
+        `/api/v1/namespaces/${encodeURIComponent(namespace)}/topology/stream`,
+        () => void this.load(namespace),
+      );
+      onCleanup(stop);
     });
   }
 

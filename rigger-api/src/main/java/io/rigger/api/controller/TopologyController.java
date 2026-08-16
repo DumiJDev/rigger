@@ -3,9 +3,11 @@ package io.rigger.api.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.dockerjava.api.model.TaskState;
 import io.rigger.api.dto.TopologyResponse;
+import io.rigger.api.stream.NamespaceSseHub;
 import io.rigger.core.domain.resource.DeploymentSpec;
 import io.rigger.core.domain.resource.ServiceSpec;
 import io.rigger.core.domain.security.RiggerContext;
+import io.rigger.core.exception.AccessDeniedException;
 import io.rigger.security.rbac.RbacPolicyEngine;
 import io.rigger.store.entity.ResourceEntity;
 import io.rigger.store.repository.ResourceRepository;
@@ -13,8 +15,10 @@ import io.rigger.swarm.adapter.ServiceAdapter;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.*;
 
 /**
@@ -34,10 +38,12 @@ public class TopologyController {
     private final ResourceRepository store;
     private final ServiceAdapter     swarm;
     private final RbacPolicyEngine   rbac;
+    private final NamespaceSseHub    sseHub;
     private final ObjectMapper       mapper = new ObjectMapper();
 
-    public TopologyController(ResourceRepository store, ServiceAdapter swarm, RbacPolicyEngine rbac) {
-        this.store = store; this.swarm = swarm; this.rbac = rbac;
+    public TopologyController(ResourceRepository store, ServiceAdapter swarm, RbacPolicyEngine rbac,
+                               NamespaceSseHub sseHub) {
+        this.store = store; this.swarm = swarm; this.rbac = rbac; this.sseHub = sseHub;
     }
 
     @GetMapping("/topology")
@@ -90,6 +96,29 @@ public class TopologyController {
         addMountedNodes(namespace, "Secret",    deploymentSpecs, DeploymentSpec::secretRefs,    nodes, edges);
 
         return ResponseEntity.ok(new TopologyResponse(namespace, nodes, edges));
+    }
+
+    /**
+     * Pushes a ping (no payload beyond the event type) whenever a resource in this namespace is
+     * applied, deleted or scaled, so the console can refetch {@link #topology} instead of waiting
+     * on its polling interval. See {@link NamespaceSseHub} for why this carries no diff/state.
+     *
+     * <p>A denied {@link AccessDeniedException} is caught here rather than left to
+     * {@code GlobalExceptionHandler}: its JSON error body can't be negotiated against a request
+     * whose {@code Accept} is {@code text/event-stream} only, which turned a legitimate 403 into a
+     * 500 — found by actually opening this stream as a namespace-scoped VIEWER against a foreign
+     * namespace, not by compiling or unit-testing it.
+     */
+    @GetMapping("/topology/stream")
+    public ResponseEntity<SseEmitter> topologyStream(
+            @PathVariable String namespace, HttpServletRequest req) {
+        var ctx = ctx(req, namespace);
+        try {
+            rbac.authorize(ctx, "get", "Deployment");
+        } catch (AccessDeniedException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        return ResponseEntity.ok(sseHub.subscribeTopology(namespace));
     }
 
     private void addMountedNodes(String namespace, String kind,

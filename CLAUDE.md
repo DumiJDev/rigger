@@ -42,11 +42,11 @@ easy to miss until you actually call that specific endpoint.
 
 ### Scheduling and thread budget
 
-Five `@Scheduled` methods share one Spring pool: `ReconciliationLoop.reconcile` (15s),
+Six `@Scheduled` methods share one Spring pool: `ReconciliationLoop.reconcile` (15s),
 `HpaController.reconcile` (30s), `MetricsSampler.sample` (30s), `MetricsSampler.prune` (1h),
-`GitOpsAgent.poll` (60s). Boot's default pool size is **1**, so `application.yaml` sets
-`spring.task.scheduling.pool.size` (default 5, `RIGGER_SCHEDULER_POOL_SIZE`) — one thread per
-method, so none can delay another.
+`GitOpsAgent.poll` (60s), `PodWatcher.watch` (15s). Boot's default pool size is **1**, so
+`application.yaml` sets `spring.task.scheduling.pool.size` (default 6, `RIGGER_SCHEDULER_POOL_SIZE`)
+— one thread per method, so none can delay another.
 
 Not cosmetic. HPA and metrics ticks block on one Docker `statsCmd` per running container (~2s each,
 measured), so with 4 Deployments × 2 replicas the reconcile loop was observed running every 24–26s
