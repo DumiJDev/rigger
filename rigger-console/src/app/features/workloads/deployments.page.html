@@ -7,7 +7,13 @@
     [total]="items().length"
     [shown]="visible().length"
     [placeholder]="t('deployments.search')"
-  />
+  >
+    @if (canCreate()) {
+      <button type="button" class="btn btn-primary" (click)="openCreate()">
+        {{ t('deployments.create') }}
+      </button>
+    }
+  </r-list-toolbar>
 
   <r-data-state
     [loading]="loading()"
@@ -119,5 +125,126 @@
   }
   @if (viewing(); as item) {
     <r-detail-drawer [resource]="item" (closed)="viewing.set(null)" />
+  }
+
+  <!-- Create dialog -->
+  @if (creating()) {
+    <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="closeCreate()">
+      <div class="surface w-full max-w-lg p-5" (click)="$event.stopPropagation()">
+        <h2 class="text-base font-semibold">{{ t('deployments.createTitle') }}</h2>
+
+        <label class="mt-4 mb-1.5 block text-sm font-medium" for="dep-name">
+          {{ t('common.name') }}
+        </label>
+        <input id="dep-name" class="input" [(ngModel)]="newName" [disabled]="creatingBusy()" />
+
+        <div class="mt-4 grid gap-4 sm:grid-cols-2">
+          <div>
+            <label class="mb-1.5 block text-sm font-medium" for="dep-image">
+              {{ t('common.image') }}
+            </label>
+            <input
+              id="dep-image"
+              class="input font-mono text-xs"
+              placeholder="registry/name:tag"
+              [(ngModel)]="newImage"
+              [disabled]="creatingBusy()"
+            />
+          </div>
+          <div>
+            <label class="mb-1.5 block text-sm font-medium" for="dep-replicas">
+              {{ t('common.replicas') }}
+            </label>
+            <input
+              id="dep-replicas"
+              type="number"
+              min="0"
+              class="input"
+              [(ngModel)]="newReplicas"
+              [disabled]="creatingBusy()"
+            />
+          </div>
+        </div>
+
+        <label class="mt-4 mb-1.5 block text-sm font-medium">{{ t('deployments.selector') }}</label>
+        <r-kv-editor
+          [(pairs)]="selectorPairs"
+          [keyPlaceholder]="t('common.key')"
+          [valuePlaceholder]="t('common.value')"
+          [addLabel]="t('deployments.addSelector')"
+          [removeLabel]="t('common.remove')"
+          [disabled]="creatingBusy()"
+        />
+
+        <label class="mt-4 mb-1.5 block text-sm font-medium">{{ t('deployments.env') }}</label>
+        <r-kv-editor
+          [(pairs)]="envPairs"
+          [keyPlaceholder]="t('deployments.envName')"
+          [valuePlaceholder]="t('deployments.envValue')"
+          [addLabel]="t('deployments.addEnv')"
+          [removeLabel]="t('common.remove')"
+          [disabled]="creatingBusy()"
+        />
+
+        @if (availableConfigMaps().length) {
+          <label class="mt-4 mb-1.5 block text-sm font-medium">{{ t('deployments.configMapRefs') }}</label>
+          <div class="flex flex-wrap gap-3">
+            @for (name of availableConfigMaps(); track name) {
+              <label class="flex cursor-pointer items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  [checked]="selectedConfigMaps.includes(name)"
+                  [disabled]="creatingBusy()"
+                  (change)="toggleConfigMapRef(name, $any($event.target).checked)"
+                />
+                {{ name }}
+              </label>
+            }
+          </div>
+        }
+
+        @if (availableSecrets().length) {
+          <label class="mt-4 mb-1.5 block text-sm font-medium">{{ t('deployments.secretRefs') }}</label>
+          <div class="flex flex-wrap gap-3">
+            @for (name of availableSecrets(); track name) {
+              <label class="flex cursor-pointer items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  [checked]="selectedSecrets.includes(name)"
+                  [disabled]="creatingBusy()"
+                  (change)="toggleSecretRef(name, $any($event.target).checked)"
+                />
+                {{ name }}
+              </label>
+            }
+          </div>
+        }
+
+        <p class="muted mt-4 text-xs">{{ t('deployments.createAdvancedHelp') }}</p>
+
+        @if (createError(); as msg) {
+          <p
+            class="mt-4 rounded-lg px-3 py-2 text-sm"
+            style="background-color: color-mix(in oklch, var(--color-error) 12%, transparent); color: var(--color-error)"
+          >
+            {{ msg }}
+          </p>
+        }
+
+        <div class="mt-5 flex justify-end gap-2">
+          <button type="button" class="btn btn-ghost" [disabled]="creatingBusy()" (click)="closeCreate()">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            [disabled]="creatingBusy() || !newName.trim() || !newImage.trim()"
+            (click)="submitCreate()"
+          >
+            {{ creatingBusy() ? t('common.loading') : t('common.create') }}
+          </button>
+        </div>
+      </div>
+    </div>
   }
 </ng-container>

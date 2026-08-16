@@ -1,18 +1,30 @@
-import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
-import { TranslocoDirective } from '@jsverse/transloco';
-import { Observable } from 'rxjs';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+import { TranslocoDirective, TranslocoService } from '@jsverse/transloco';
+import { Observable, firstValueFrom } from 'rxjs';
 import { ResourceResponse } from '../../core/api.models';
 import { DataState } from '../../shared/data-state';
+import { KvEditor, KvPair, kvPairsToMap } from '../../shared/kv-editor';
 import { ListToolbar } from '../../shared/list-toolbar';
 import { PageHeader } from '../../shared/page-header';
 import { DetailDrawer } from '../../shared/detail-drawer';
 import { RowAction, RowMenu } from '../../shared/row-menu';
+import { toYaml } from '../../shared/yaml';
 import { ResourceListPage } from './resource-page.base';
 
 @Component({
   selector: 'r-configmaps',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoDirective, PageHeader, DataState, ListToolbar, RowMenu, DetailDrawer],
+  imports: [
+    TranslocoDirective,
+    PageHeader,
+    DataState,
+    ListToolbar,
+    RowMenu,
+    DetailDrawer,
+    KvEditor,
+    FormsModule,
+  ],
   template: `
     <ng-container *transloco="let t">
       <r-page-header [title]="t('configmaps.title')" [subtitle]="t('configmaps.subtitle')">
@@ -23,7 +35,13 @@ import { ResourceListPage } from './resource-page.base';
         [total]="items().length"
         [shown]="visible().length"
         [placeholder]="t('configmaps.search')"
-      />
+      >
+        @if (canCreate()) {
+          <button type="button" class="btn btn-primary" (click)="openCreate()">
+            {{ t('configmaps.create') }}
+          </button>
+        }
+      </r-list-toolbar>
 
       <r-data-state
         [loading]="loading()"
@@ -98,6 +116,52 @@ import { ResourceListPage } from './resource-page.base';
       @if (viewing(); as item) {
         <r-detail-drawer [resource]="item" (closed)="viewing.set(null)" />
       }
+
+      @if (creating()) {
+        <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="closeCreate()">
+          <div class="surface w-full max-w-lg p-5" (click)="$event.stopPropagation()">
+            <h2 class="text-base font-semibold">{{ t('configmaps.createTitle') }}</h2>
+
+            <label class="mt-4 mb-1.5 block text-sm font-medium" for="cm-name">
+              {{ t('common.name') }}
+            </label>
+            <input id="cm-name" class="input" [(ngModel)]="newName" [disabled]="creatingBusy()" />
+
+            <label class="mt-4 mb-1.5 block text-sm font-medium">{{ t('configmaps.data') }}</label>
+            <r-kv-editor
+              [(pairs)]="dataPairs"
+              [keyPlaceholder]="t('common.key')"
+              [valuePlaceholder]="t('common.value')"
+              [addLabel]="t('configmaps.addKey')"
+              [removeLabel]="t('common.remove')"
+              [disabled]="creatingBusy()"
+            />
+
+            @if (createError(); as msg) {
+              <p
+                class="mt-4 rounded-lg px-3 py-2 text-sm"
+                style="background-color: color-mix(in oklch, var(--color-error) 12%, transparent); color: var(--color-error)"
+              >
+                {{ msg }}
+              </p>
+            }
+
+            <div class="mt-5 flex justify-end gap-2">
+              <button type="button" class="btn btn-ghost" [disabled]="creatingBusy()" (click)="closeCreate()">
+                {{ t('common.cancel') }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-primary"
+                [disabled]="creatingBusy() || !newName.trim()"
+                (click)="submitCreate()"
+              >
+                {{ creatingBusy() ? t('common.loading') : t('common.create') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      }
     </ng-container>
   `,
 })
@@ -106,9 +170,58 @@ export class ConfigMapsPage extends ResourceListPage {
   protected readonly rbacKind = 'ConfigMap';
   readonly confirming = signal<string | null>(null);
 
+  private readonly transloco = inject(TranslocoService);
+
+  readonly creating = signal(false);
+  readonly creatingBusy = signal(false);
+  readonly createError = signal<string | null>(null);
+  newName = '';
+  dataPairs: KvPair[] = [];
+
   constructor() {
     super();
     this.watchNamespace();
+  }
+
+  canCreate(): boolean {
+    return this.auth.can('apply', this.rbacKind);
+  }
+
+  openCreate(): void {
+    this.newName = '';
+    this.dataPairs = [];
+    this.createError.set(null);
+    this.creating.set(true);
+  }
+
+  closeCreate(): void {
+    if (this.creatingBusy()) return;
+    this.creating.set(false);
+  }
+
+  async submitCreate(): Promise<void> {
+    this.creatingBusy.set(true);
+    this.createError.set(null);
+    try {
+      const manifest = {
+        apiVersion: 'rigger.io/v1',
+        kind: 'ConfigMap',
+        metadata: { name: this.newName.trim(), namespace: this.ns.current() },
+        spec: { data: kvPairsToMap(this.dataPairs) },
+      };
+      await firstValueFrom(this.api.apply(this.ns.current(), toYaml(manifest), false));
+      this.creating.set(false);
+      await this.load();
+    } catch (e) {
+      const err = e as { status?: number; error?: { detail?: string } };
+      this.createError.set(
+        err?.status === 403
+          ? this.transloco.translate('errors.forbidden')
+          : (err?.error?.detail ?? this.transloco.translate('common.error')),
+      );
+    } finally {
+      this.creatingBusy.set(false);
+    }
   }
 
   protected fetch(namespace: string): Observable<ResourceResponse[]> {
