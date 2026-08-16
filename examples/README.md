@@ -7,33 +7,29 @@ Swarm — if one of them stops parsing, that is a bug in the example, not in you
 examples/
 ├── deployment-sample.yaml          # smallest possible Deployment (README quick start)
 ├── gitops/                         # a complete app — point the GitOps agent here
-│   ├── 10-configmap.yaml           # ConfigMap
-│   ├── 20-secret.yaml              # Secret (base64 values, encrypted at rest)
-│   ├── 30-deployment.yaml          # Deployment + HPA + flat resources + rolling update
-│   ├── 40-service-clusterip.yaml   # Service, internal only
-│   └── 50-service-loadbalancer.yaml# Service, published on every node
+│   └── app.yaml                    # ConfigMap + Secret + Deployment + 2 Services, one file
 └── cluster/
     └── rigger.cluster.yaml         # single-node cluster, with commented-out growth
 ```
 
-`gitops/` is one app — `shopfront`, a web tier in namespace `demo` with its configuration, its
-credentials, an internal Service and a published one — split one resource per file so a diff
-tells you exactly what changed.
+`gitops/app.yaml` is one app — `whoami`, a web tier in namespace `demo` with its configuration, its
+credentials, an internal Service and a published one — as a single multi-document manifest rather
+than one resource per file, since `riggerctl apply -f` and the GitOps agent both already handle a
+multi-document file the same way they'd handle a directory.
 
-## Apply them by hand
+## Apply it by hand
 
 ```bash
-riggerctl apply -f examples/gitops/ -n demo --dry-run --insecure   # validate only
-riggerctl apply -f examples/gitops/ -n demo --insecure
+riggerctl apply -f examples/gitops/app.yaml -n demo --dry-run --insecure   # validate only
+riggerctl apply -f examples/gitops/app.yaml -n demo --insecure
 riggerctl get deployments -n demo --insecure
 
 # Cleanup — all four kinds have a DELETE endpoint; the CLI asks for confirmation on each
-riggerctl delete service   shopfront-web-public   -n demo --insecure
-riggerctl delete service   shopfront-web-internal -n demo --insecure
-riggerctl delete configmap shopfront-config       -n demo --insecure
-riggerctl delete secret    shopfront-secrets      -n demo --insecure
-riggerctl delete deployment shopfront-web         -n demo --insecure
-riggerctl delete deployment hello-web             -n demo --insecure
+riggerctl delete service   whoami-public   -n demo --insecure
+riggerctl delete service   whoami-internal -n demo --insecure
+riggerctl delete configmap whoami-config   -n demo --insecure
+riggerctl delete secret    whoami-secret   -n demo --insecure
+riggerctl delete deployment whoami         -n demo --insecure
 ```
 
 Deleting the resource also removes what it created in Swarm (the service, the Docker Config, the

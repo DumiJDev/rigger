@@ -1,0 +1,138 @@
+# A complete, working Rigger application. Copy this whole file and apply it:
+#
+#   riggerctl apply -f examples/gitops/app.yaml -i
+#
+# Then prove it is actually running, rather than taking this file's word for it:
+#
+#   curl -s http://127.0.0.1:18088/ | head -5        # the app answers
+#   for i in 1 2 3 4; do curl -s http://127.0.0.1:18088/ | grep Hostname; done
+#                                                    # two different hostnames = both replicas serve
+#
+# The image is traefik/whoami (5 MB) precisely because it makes the result visible: it prints the
+# container's hostname and the request headers, so load balancing and — once ingress is on — host
+# routing are things you can see rather than infer. An nginx welcome page proves only that something
+# is listening.
+#
+# One file rather than five, in the order the resources depend on each other: multi-document YAML is
+# applied top to bottom, so the ConfigMap and the Secret exist before the Deployment that references
+# them. The GitOps agent reads this same file (see examples/README.md).
+---
+apiVersion: rigger.io/v1
+kind: ConfigMap
+metadata:
+  name: whoami-config
+  namespace: demo
+spec:
+  data:
+    GREETING: "hello from rigger"
+    REGION: "eu-west"
+---
+apiVersion: rigger.io/v1
+kind: Secret
+metadata:
+  name: whoami-secret
+  namespace: demo
+spec:
+  # Values are base64 in the manifest. Rigger encrypts them with AES-256-GCM before storing, so the
+  # database only ever holds ciphertext, and every read through the API or console returns
+  # {"keys":"redacted"} — never the value.
+  #   echo -n 'sup3r-s3cret' | base64   ->   c3VwM3ItczNjcmV0
+  data:
+    API_TOKEN: c3VwM3ItczNjcmV0
+---
+apiVersion: rigger.io/v1
+kind: Deployment
+metadata:
+  name: whoami
+  namespace: demo
+  labels:
+    app: whoami
+spec:
+  image: traefik/whoami:latest
+  replicas: 2
+  selector:
+    app: whoami
+
+  # Literal values only. `valueFrom` (configMapKeyRef / secretKeyRef) parses and validates but is
+  # NOT injected into the container yet — see examples/README.md. Using it here would look like it
+  # worked and quietly deliver nothing.
+  env:
+    - name: WHOAMI_NAME
+      value: rigger-demo
+
+  # Flat, not nested. `resources.limits.cpu` is what Kubernetes uses and what this project's JSON
+  # schema still documents, but the domain record is flat and the parser rejects unknown fields — so
+  # the nested form fails to apply. cpuLimit is in cores, memoryLimit accepts Mi/Gi.
+  resources:
+    cpuLimit: "0.25"
+    memoryLimit: "64Mi"
+    cpuReserved: "0.05"
+    memoryReserved: "32Mi"
+
+  # No `type:` field here either — the record has maxUnavailable/delaySeconds/failureAction only.
+  strategy:
+    maxUnavailable: 1
+    delaySeconds: 5
+    failureAction: PAUSE
+
+  # Autoscaling. The HPA reads real CPU from Docker stats every 30s; with an idle demo app it will
+  # sit at minReplicas, which is the correct behaviour rather than a broken one.
+  hpa:
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    scaleDownCooldownSeconds: 180
+
+  # Mounted into the container as a read-only JSON file at /configmap/whoami-config. Verify it:
+  #   docker exec "$(docker ps -qf name=rigger-demo-whoami | head -1)" cat /configmap/whoami-config
+  configMapRefs:
+    - whoami-config
+
+  # NOTE: secretRefs is accepted and stored, but nothing in the Swarm adapter mounts it — the Secret
+  # is pushed to Docker as a real Docker Secret by the operator, and reaching it from the container
+  # needs a mount Rigger cannot express yet. Left out rather than shipped as decoration.
+---
+apiVersion: rigger.io/v1
+kind: Service
+metadata:
+  name: whoami-internal
+  namespace: demo
+spec:
+  # ClusterIP is a no-op on Swarm by design: the overlay network already gives every service DNS on
+  # its own name, so another workload in this namespace reaches this one at "whoami". It is declared
+  # anyway because it documents the intent.
+  type: ClusterIP
+  selector:
+    app: whoami
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+---
+apiVersion: rigger.io/v1
+kind: Service
+metadata:
+  name: whoami-public
+  namespace: demo
+spec:
+  # LoadBalancer publishes the port on every node. 18088 is deliberately high and unusual so it does
+  # not collide with something already running on your machine.
+  type: LoadBalancer
+  selector:
+    app: whoami
+  ports:
+    - port: 18088
+      targetPort: 80
+      protocol: TCP
+
+  # Host-based routing through Traefik, which Rigger provisions itself. Safe to leave here with
+  # ingress disabled — the block is simply stored and no labels are emitted. To make it live:
+  #
+  #   RIGGER_INGRESS_ENABLED=true   (binds 80/443 on the node)
+  #   curl -H 'Host: whoami.rigger.test' http://127.0.0.1/
+  #
+  # Allow up to ~90s: the reconciliation loop, Traefik's own provider poll, and the task recreation
+  # caused by attaching the overlay network each add a step.
+  ingress:
+    host: whoami.rigger.test
+    tls: false
