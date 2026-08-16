@@ -8,8 +8,9 @@ import java.time.Instant;
  * single-repository shape of {@link GitOpsStateEntity}.
  *
  * <p>Exists so the agent can be reconfigured from the console at runtime; before this, config came
- * only from environment variables and needed a restart. Holds no credentials, only a path to an
- * SSH key already present on the server.
+ * only from environment variables and needed a restart. Supports two authentication modes: an SSH
+ * key already present on the server ({@code sshKeyPath}), or HTTPS username + token — the token is
+ * stored encrypted (AES-256-GCM via {@code SecretEncryptor}), never in plaintext.
  */
 @Entity
 @Table(name = "gitops_config")
@@ -33,6 +34,15 @@ public class GitOpsConfigEntity {
 
     @Column(name = "ssh_key_path")
     private String sshKeyPath;
+
+    @Column(name = "auth_type", nullable = false)
+    private String authType = "ssh";
+
+    @Column(name = "https_username")
+    private String httpsUsername;
+
+    @Column(name = "https_token_encrypted")
+    private String httpsTokenEncrypted;
 
     @Column(name = "poll_interval_seconds", nullable = false)
     private int pollIntervalSeconds = 60;
@@ -61,6 +71,12 @@ public class GitOpsConfigEntity {
     public void setBranch(String b)        { this.branch = b; }
     public String getSshKeyPath()          { return sshKeyPath; }
     public void setSshKeyPath(String k)    { this.sshKeyPath = k; }
+    public String getAuthType()            { return authType; }
+    public void setAuthType(String a)      { this.authType = a; }
+    public String getHttpsUsername()       { return httpsUsername; }
+    public void setHttpsUsername(String u) { this.httpsUsername = u; }
+    public String getHttpsTokenEncrypted() { return httpsTokenEncrypted; }
+    public void setHttpsTokenEncrypted(String t) { this.httpsTokenEncrypted = t; }
     public int getPollIntervalSeconds()    { return pollIntervalSeconds; }
     public void setPollIntervalSeconds(int s) { this.pollIntervalSeconds = s; }
     public String getManifestPaths()       { return manifestPaths; }

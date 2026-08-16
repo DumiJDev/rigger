@@ -8,7 +8,10 @@ import io.rigger.manifest.parser.ManifestParser;
 import io.rigger.store.entity.GitOpsStateEntity;
 import io.rigger.store.repository.GitOpsStateRepository;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.TransportCommand;
+import org.eclipse.jgit.api.TransportConfigCallback;
 import org.eclipse.jgit.transport.SshTransport;
+import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.eclipse.jgit.transport.sshd.SshdSessionFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -136,12 +139,12 @@ public class GitOpsAgent {
         if (localRepoPath == null) {
             localRepoPath = Files.createTempDirectory("rigger-gitops-");
             log.info("GitOps: cloning {} into {}", config.repositoryUrl(), localRepoPath);
-            Git.cloneRepository()
+            var clone = Git.cloneRepository()
                 .setURI(config.repositoryUrl())
                 .setDirectory(localRepoPath.toFile())
-                .setBranch(config.branch())
-                .call()
-                .close();
+                .setBranch(config.branch());
+            configureTransport(clone, config);
+            clone.call().close();
             clonedRepository = config.repositoryUrl();
             clonedBranch     = config.branch();
         }
@@ -149,11 +152,43 @@ public class GitOpsAgent {
 
     private String fetchAndGetHead(GitOpsConfigService.GitOpsSettings config) throws Exception {
         try (var git = Git.open(localRepoPath.toFile())) {
-            git.fetch().call();
+            var fetch = git.fetch();
+            configureTransport(fetch, config);
+            fetch.call();
             git.reset().setMode(org.eclipse.jgit.api.ResetCommand.ResetType.HARD)
                 .setRef("origin/" + config.branch()).call();
             return git.getRepository().resolve("HEAD").getName();
         }
+    }
+
+    /**
+     * Wires the transport for either auth mode. This used to be missing entirely — {@code
+     * sshKeyPath} was stored and shown in the console but never actually applied, so every clone
+     * fell back to the process's default SSH behaviour (agent, {@code ~/.ssh/id_rsa}), silently
+     * ignoring whatever key the operator configured.
+     */
+    private void configureTransport(TransportCommand<?, ?> cmd, GitOpsConfigService.GitOpsSettings config) {
+        if (config.isHttps()) {
+            cmd.setCredentialsProvider(new UsernamePasswordCredentialsProvider(
+                config.httpsUsername(), config.httpsToken() == null ? "" : config.httpsToken()));
+            return;
+        }
+        if (config.sshKeyPath() == null || config.sshKeyPath().isBlank()) return;
+        SshdSessionFactory factory = sshSessionFactory(config.sshKeyPath());
+        cmd.setTransportConfigCallback((TransportConfigCallback) transport -> {
+            if (transport instanceof SshTransport sshTransport) {
+                sshTransport.setSshSessionFactory(factory);
+            }
+        });
+    }
+
+    private SshdSessionFactory sshSessionFactory(String sshKeyPath) {
+        return new SshdSessionFactory() {
+            @Override
+            protected java.util.List<Path> getDefaultIdentities(File sshDir) {
+                return java.util.List.of(Paths.get(sshKeyPath));
+            }
+        };
     }
 
     private int applyChangedManifests(GitOpsConfigService.GitOpsSettings config, String commit) throws Exception {

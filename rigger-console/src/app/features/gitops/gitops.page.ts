@@ -47,7 +47,9 @@ export class GitOpsPage {
     try {
       const config = await firstValueFrom(this.api.gitopsConfig());
       this.config.set(config);
-      this.form = { ...config };
+      // httpsToken is write-only — the server never returns it, so the form field starts blank
+      // regardless of whether a token is already stored (see httpsTokenSet).
+      this.form = { ...config, httpsToken: '' };
       this.manifestPathsText = (config.manifestPaths ?? []).join(', ');
     } catch {
       this.config.set(null);
@@ -92,7 +94,7 @@ export class GitOpsPage {
       };
       const saved = await firstValueFrom(this.api.saveGitopsConfig(payload));
       this.config.set(saved);
-      this.form = { ...saved };
+      this.form = { ...saved, httpsToken: '' };
       this.failed.set(false);
       this.message.set(this.transloco.translate('gitops.saved'));
       // The agent picks this up on its next poll, so refresh state to reflect the new repository.
@@ -117,6 +119,9 @@ function emptyConfig(): GitOpsConfig {
     repositoryUrl: '',
     branch: 'main',
     sshKeyPath: '',
+    authType: 'ssh',
+    httpsUsername: '',
+    httpsToken: '',
     pollIntervalSeconds: 60,
     manifestPaths: ['manifests/'],
     namespaceMapping: {},

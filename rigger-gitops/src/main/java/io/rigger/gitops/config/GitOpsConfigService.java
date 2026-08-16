@@ -1,6 +1,7 @@
 package io.rigger.gitops.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.rigger.security.crypto.SecretEncryptor;
 import io.rigger.store.entity.GitOpsConfigEntity;
 import io.rigger.store.repository.GitOpsConfigRepository;
 import org.slf4j.Logger;
@@ -28,11 +29,14 @@ public class GitOpsConfigService {
 
     private final GitOpsConfigRepository repo;
     private final GitOpsProperties       properties;
+    private final SecretEncryptor        encryptor;
     private final ObjectMapper           mapper = new ObjectMapper();
 
-    public GitOpsConfigService(GitOpsConfigRepository repo, GitOpsProperties properties) {
+    public GitOpsConfigService(GitOpsConfigRepository repo, GitOpsProperties properties,
+                                SecretEncryptor encryptor) {
         this.repo = repo;
         this.properties = properties;
+        this.encryptor = encryptor;
     }
 
     /** Effective config, database-first with property fallback. */
@@ -54,6 +58,13 @@ public class GitOpsConfigService {
         entity.setRepositoryUrl(settings.repositoryUrl());
         entity.setBranch(settings.branch() == null || settings.branch().isBlank() ? "main" : settings.branch());
         entity.setSshKeyPath(settings.sshKeyPath());
+        entity.setAuthType(settings.authType() == null || settings.authType().isBlank() ? "ssh" : settings.authType());
+        entity.setHttpsUsername(settings.httpsUsername());
+        // A blank token means "keep the currently stored one" — the console never re-sends the
+        // decrypted value, so an unchanged form field must not wipe it.
+        if (settings.httpsToken() != null && !settings.httpsToken().isBlank()) {
+            entity.setHttpsTokenEncrypted(encryptor.encrypt(settings.httpsToken()));
+        }
         entity.setPollIntervalSeconds(settings.pollIntervalSeconds() > 0 ? settings.pollIntervalSeconds() : 60);
         entity.setManifestPaths(String.join(",", settings.manifestPaths()));
         try {
@@ -77,8 +88,10 @@ public class GitOpsConfigService {
             log.warn("Stored GitOps namespaceMapping is unreadable, treating as empty: {}", ex.getMessage());
             mapping = new LinkedHashMap<>();
         }
+        String httpsToken = e.getHttpsTokenEncrypted() == null ? null : encryptor.decrypt(e.getHttpsTokenEncrypted());
         return new GitOpsSettings(
             e.isEnabled(), e.getRepositoryUrl(), e.getBranch(), e.getSshKeyPath(),
+            e.getAuthType(), e.getHttpsUsername(), httpsToken,
             e.getPollIntervalSeconds(),
             Arrays.stream(e.getManifestPaths().split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList(),
             mapping, e.getUpdatedAt(), e.getUpdatedBy());
@@ -87,7 +100,9 @@ public class GitOpsConfigService {
     private GitOpsSettings fromProperties() {
         return new GitOpsSettings(
             properties.isEnabled(), properties.getRepository(), properties.getBranch(),
-            properties.getSshKeyPath(), properties.getPollIntervalSeconds(),
+            properties.getSshKeyPath(), properties.getAuthType(),
+            properties.getHttpsUsername(), properties.getHttpsToken(),
+            properties.getPollIntervalSeconds(),
             properties.getManifestPaths(), properties.getNamespaceMapping(), null, null);
     }
 
@@ -97,6 +112,9 @@ public class GitOpsConfigService {
             String repositoryUrl,
             String branch,
             String sshKeyPath,
+            String authType,
+            String httpsUsername,
+            String httpsToken,
             int pollIntervalSeconds,
             List<String> manifestPaths,
             Map<String, String> namespaceMapping,
@@ -106,6 +124,11 @@ public class GitOpsConfigService {
         public GitOpsSettings {
             if (manifestPaths == null) manifestPaths = List.of("manifests/");
             if (namespaceMapping == null) namespaceMapping = Map.of();
+            if (authType == null || authType.isBlank()) authType = "ssh";
+        }
+
+        public boolean isHttps() {
+            return "https".equalsIgnoreCase(authType);
         }
     }
 }

@@ -79,6 +79,7 @@ public class GitOpsController {
 
         var settings = new GitOpsConfigService.GitOpsSettings(
             body.enabled(), body.repositoryUrl(), body.branch(), body.sshKeyPath(),
+            body.authType(), body.httpsUsername(), body.httpsToken(),
             body.pollIntervalSeconds(),
             body.manifestPaths() == null ? List.of("manifests/") : body.manifestPaths(),
             body.namespaceMapping(), null, null);
@@ -93,7 +94,9 @@ public class GitOpsController {
 
     private GitOpsConfigResponse toResponse(GitOpsConfigService.GitOpsSettings s) {
         return new GitOpsConfigResponse(
-            s.enabled(), s.repositoryUrl(), s.branch(), s.sshKeyPath(), s.pollIntervalSeconds(),
+            s.enabled(), s.repositoryUrl(), s.branch(), s.sshKeyPath(),
+            s.authType(), s.httpsUsername(), s.httpsToken() != null && !s.httpsToken().isBlank(),
+            s.pollIntervalSeconds(),
             s.manifestPaths(), s.namespaceMapping(),
             configService.isStored() ? "database" : "properties",
             s.updatedAt(), s.updatedBy());

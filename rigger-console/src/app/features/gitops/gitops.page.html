@@ -121,18 +121,76 @@
           </div>
 
           <div>
-            <label class="mb-1.5 block text-sm font-medium" for="key">
-              {{ t('gitops.sshKeyPath') }}
-            </label>
-            <input
-              id="key"
-              class="input font-mono text-xs"
-              placeholder="/etc/rigger/gitops-key"
-              [(ngModel)]="form.sshKeyPath"
-              [disabled]="!canEdit() || saving()"
-            />
-            <p class="muted mt-1 text-xs">{{ t('gitops.sshKeyHelp') }}</p>
+            <label class="mb-1.5 block text-sm font-medium">{{ t('gitops.authType') }}</label>
+            <div class="flex gap-4 text-sm">
+              <label class="flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="radio"
+                  name="authType"
+                  value="ssh"
+                  [(ngModel)]="form.authType"
+                  [disabled]="!canEdit() || saving()"
+                />
+                {{ t('gitops.authTypeSsh') }}
+              </label>
+              <label class="flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="radio"
+                  name="authType"
+                  value="https"
+                  [(ngModel)]="form.authType"
+                  [disabled]="!canEdit() || saving()"
+                />
+                {{ t('gitops.authTypeHttps') }}
+              </label>
+            </div>
           </div>
+
+          @if (form.authType === 'https') {
+            <div class="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label class="mb-1.5 block text-sm font-medium" for="httpsUsername">
+                  {{ t('gitops.httpsUsername') }}
+                </label>
+                <input
+                  id="httpsUsername"
+                  class="input font-mono text-xs"
+                  [(ngModel)]="form.httpsUsername"
+                  [disabled]="!canEdit() || saving()"
+                />
+              </div>
+              <div>
+                <label class="mb-1.5 block text-sm font-medium" for="httpsToken">
+                  {{ t('gitops.httpsToken') }}
+                </label>
+                <input
+                  id="httpsToken"
+                  type="password"
+                  class="input font-mono text-xs"
+                  [placeholder]="
+                    form.httpsTokenSet ? t('gitops.httpsTokenSet') : t('gitops.httpsToken')
+                  "
+                  [(ngModel)]="form.httpsToken"
+                  [disabled]="!canEdit() || saving()"
+                />
+                <p class="muted mt-1 text-xs">{{ t('gitops.httpsTokenHelp') }}</p>
+              </div>
+            </div>
+          } @else {
+            <div>
+              <label class="mb-1.5 block text-sm font-medium" for="key">
+                {{ t('gitops.sshKeyPath') }}
+              </label>
+              <input
+                id="key"
+                class="input font-mono text-xs"
+                placeholder="/etc/rigger/gitops-key"
+                [(ngModel)]="form.sshKeyPath"
+                [disabled]="!canEdit() || saving()"
+              />
+              <p class="muted mt-1 text-xs">{{ t('gitops.sshKeyHelp') }}</p>
+            </div>
+          }
 
           <div>
             <label class="mb-1.5 block text-sm font-medium" for="paths">

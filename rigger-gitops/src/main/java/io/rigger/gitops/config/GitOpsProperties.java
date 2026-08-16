@@ -15,6 +15,9 @@ import java.util.Map;
  *     repository: git@github.com:myorg/infra.git
  *     branch: main
  *     sshKeyPath: /etc/rigger/gitops-key
+ *     authType: ssh              # or https
+ *     httpsUsername: gitops-bot
+ *     httpsToken: ${RIGGER_GITOPS_HTTPS_TOKEN}
  *     pollIntervalSeconds: 60
  *     manifestPaths:
  *       - manifests/production/
@@ -29,6 +32,9 @@ public class GitOpsProperties {
     private String      repository;
     private String      branch               = "main";
     private String      sshKeyPath;
+    private String      authType             = "ssh";
+    private String      httpsUsername;
+    private String      httpsToken;
     private int         pollIntervalSeconds  = 60;
     private List<String> manifestPaths       = List.of("manifests/");
     private Map<String,String> namespaceMapping = Map.of();
@@ -41,6 +47,12 @@ public class GitOpsProperties {
     public void setBranch(String b)             { this.branch = b; }
     public String getSshKeyPath()               { return sshKeyPath; }
     public void setSshKeyPath(String k)         { this.sshKeyPath = k; }
+    public String getAuthType()                  { return authType; }
+    public void setAuthType(String a)           { this.authType = a; }
+    public String getHttpsUsername()             { return httpsUsername; }
+    public void setHttpsUsername(String u)      { this.httpsUsername = u; }
+    public String getHttpsToken()                { return httpsToken; }
+    public void setHttpsToken(String t)         { this.httpsToken = t; }
     public int getPollIntervalSeconds()         { return pollIntervalSeconds; }
     public void setPollIntervalSeconds(int s)   { this.pollIntervalSeconds = s; }
     public List<String> getManifestPaths()      { return manifestPaths; }
