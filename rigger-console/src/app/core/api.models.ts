@@ -185,6 +185,12 @@ export interface GitOpsConfig {
   repositoryUrl: string;
   branch: string;
   sshKeyPath: string;
+  authType: 'ssh' | 'https';
+  httpsUsername?: string;
+  /** Write-only: sent to save a new token, left blank to keep the one already stored. */
+  httpsToken?: string;
+  /** Read-only: whether a token is currently stored — the token itself is never returned. */
+  httpsTokenSet?: boolean;
   pollIntervalSeconds: number;
   manifestPaths: string[];
   namespaceMapping: Record<string, string>;
