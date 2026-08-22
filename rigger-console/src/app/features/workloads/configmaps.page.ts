@@ -8,6 +8,7 @@ import { KvEditor, KvPair, kvPairsToMap } from '../../shared/kv-editor';
 import { ListToolbar } from '../../shared/list-toolbar';
 import { PageHeader } from '../../shared/page-header';
 import { DetailDrawer } from '../../shared/detail-drawer';
+import { Dialog } from '../../shared/dialog';
 import { RowAction, RowMenu } from '../../shared/row-menu';
 import { toYaml } from '../../shared/yaml';
 import { ResourceListPage } from './resource-page.base';
@@ -22,6 +23,7 @@ import { ResourceListPage } from './resource-page.base';
     ListToolbar,
     RowMenu,
     DetailDrawer,
+    Dialog,
     KvEditor,
     FormsModule,
   ],
@@ -43,6 +45,29 @@ import { ResourceListPage } from './resource-page.base';
         }
       </r-list-toolbar>
 
+      @if (hasSelection()) {
+        <div
+          class="mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"
+          style="border-color: var(--border-subtle); background-color: var(--surface-sunken)"
+        >
+          <span>{{ t('common.selectedCount', { count: selected().size }) }}</span>
+          <span class="flex-1"></span>
+          @if (canDelete()) {
+            <button
+              type="button"
+              class="btn btn-danger py-1"
+              [disabled]="bulkBusy()"
+              (click)="bulkConfirming.set(true)"
+            >
+              {{ t('common.deleteSelected') }}
+            </button>
+          }
+          <button type="button" class="btn btn-ghost py-1" (click)="clearSelection()">
+            {{ t('common.clearSelection') }}
+          </button>
+        </div>
+      }
+
       <r-data-state
         [loading]="loading()"
         [error]="error() ? t(error()!) : null"
@@ -54,6 +79,14 @@ import { ResourceListPage } from './resource-page.base';
           <table class="data">
             <thead>
               <tr>
+                <th class="w-8">
+                  <input
+                    type="checkbox"
+                    [attr.aria-label]="t('common.selectAll')"
+                    [checked]="allVisibleSelected()"
+                    (change)="toggleSelectAll()"
+                  />
+                </th>
                 <th class="sortable" [attr.aria-sort]="ariaSort('name')" (click)="sortBy('name')">
                   {{ t('common.name') }}
                 </th>
@@ -69,6 +102,14 @@ import { ResourceListPage } from './resource-page.base';
             <tbody>
               @for (item of visible(); track item.name) {
                 <tr class="clickable" (click)="openDetails(item)">
+                  <td (click)="$event.stopPropagation()">
+                    <input
+                      type="checkbox"
+                      [attr.aria-label]="t('common.selectRow', { name: item.name })"
+                      [checked]="isSelected(item.name)"
+                      (change)="toggleSelect(item.name, $any($event.target).checked)"
+                    />
+                  </td>
                   <td class="font-medium">{{ item.name }}</td>
                   <td>
                     <div class="flex flex-wrap gap-1">
@@ -99,68 +140,81 @@ import { ResourceListPage } from './resource-page.base';
       </r-data-state>
 
       @if (confirming(); as name) {
-        <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="confirming.set(null)">
-          <div class="surface w-full max-w-sm p-5" (click)="$event.stopPropagation()">
-            <p class="text-sm">{{ t('configmaps.deleteConfirm', { name }) }}</p>
-            <div class="mt-5 flex justify-end gap-2">
-              <button type="button" class="btn btn-ghost" (click)="confirming.set(null)">
-                {{ t('common.cancel') }}
-              </button>
-              <button type="button" class="btn btn-danger" (click)="confirming.set(null); remove(name)">
-                {{ t('common.delete') }}
-              </button>
-            </div>
+        <r-dialog size="sm" ariaLabel="{{ t('configmaps.deleteConfirm', { name }) }}" (closed)="confirming.set(null)">
+          <p class="text-sm">{{ t('configmaps.deleteConfirm', { name }) }}</p>
+          <div class="mt-5 flex justify-end gap-2">
+            <button type="button" class="btn btn-ghost" (click)="confirming.set(null)">
+              {{ t('common.cancel') }}
+            </button>
+            <button type="button" class="btn btn-danger" (click)="confirming.set(null); remove(name)">
+              {{ t('common.delete') }}
+            </button>
           </div>
-        </div>
+        </r-dialog>
+      }
+      @if (bulkConfirming()) {
+        <r-dialog
+          size="sm"
+          ariaLabel="{{ t('common.deleteSelectedConfirm', { count: selected().size }) }}"
+          (closed)="bulkConfirming.set(false)"
+        >
+          <p class="text-sm">{{ t('common.deleteSelectedConfirm', { count: selected().size }) }}</p>
+          <div class="mt-5 flex justify-end gap-2">
+            <button type="button" class="btn btn-ghost" (click)="bulkConfirming.set(false)">
+              {{ t('common.cancel') }}
+            </button>
+            <button type="button" class="btn btn-danger" [disabled]="bulkBusy()" (click)="confirmBulkRemove()">
+              {{ t('common.delete') }}
+            </button>
+          </div>
+        </r-dialog>
       }
       @if (viewing(); as item) {
         <r-detail-drawer [resource]="item" (closed)="viewing.set(null)" />
       }
 
       @if (creating()) {
-        <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="closeCreate()">
-          <div class="surface w-full max-w-lg p-5" (click)="$event.stopPropagation()">
-            <h2 class="text-base font-semibold">{{ t('configmaps.createTitle') }}</h2>
+        <r-dialog size="lg" labelledBy="cm-create-title" (closed)="closeCreate()">
+          <h2 id="cm-create-title" class="text-base font-semibold">{{ t('configmaps.createTitle') }}</h2>
 
-            <label class="mt-4 mb-1.5 block text-sm font-medium" for="cm-name">
-              {{ t('common.name') }}
-            </label>
-            <input id="cm-name" class="input" [(ngModel)]="newName" [disabled]="creatingBusy()" />
+          <label class="mt-4 mb-1.5 block text-sm font-medium" for="cm-name">
+            {{ t('common.name') }}
+          </label>
+          <input id="cm-name" class="input" [(ngModel)]="newName" [disabled]="creatingBusy()" />
 
-            <label class="mt-4 mb-1.5 block text-sm font-medium">{{ t('configmaps.data') }}</label>
-            <r-kv-editor
-              [(pairs)]="dataPairs"
-              [keyPlaceholder]="t('common.key')"
-              [valuePlaceholder]="t('common.value')"
-              [addLabel]="t('configmaps.addKey')"
-              [removeLabel]="t('common.remove')"
-              [disabled]="creatingBusy()"
-            />
+          <label class="mt-4 mb-1.5 block text-sm font-medium">{{ t('configmaps.data') }}</label>
+          <r-kv-editor
+            [(pairs)]="dataPairs"
+            [keyPlaceholder]="t('common.key')"
+            [valuePlaceholder]="t('common.value')"
+            [addLabel]="t('configmaps.addKey')"
+            [removeLabel]="t('common.remove')"
+            [disabled]="creatingBusy()"
+          />
 
-            @if (createError(); as msg) {
-              <p
-                class="mt-4 rounded-lg px-3 py-2 text-sm"
-                style="background-color: color-mix(in oklch, var(--color-error) 12%, transparent); color: var(--color-error)"
-              >
-                {{ msg }}
-              </p>
-            }
+          @if (createError(); as msg) {
+            <p
+              class="mt-4 rounded-lg px-3 py-2 text-sm"
+              style="background-color: color-mix(in oklch, var(--color-error) 12%, transparent); color: var(--color-error)"
+            >
+              {{ msg }}
+            </p>
+          }
 
-            <div class="mt-5 flex justify-end gap-2">
-              <button type="button" class="btn btn-ghost" [disabled]="creatingBusy()" (click)="closeCreate()">
-                {{ t('common.cancel') }}
-              </button>
-              <button
-                type="button"
-                class="btn btn-primary"
-                [disabled]="creatingBusy() || !newName.trim()"
-                (click)="submitCreate()"
-              >
-                {{ creatingBusy() ? t('common.loading') : t('common.create') }}
-              </button>
-            </div>
+          <div class="mt-5 flex justify-end gap-2">
+            <button type="button" class="btn btn-ghost" [disabled]="creatingBusy()" (click)="closeCreate()">
+              {{ t('common.cancel') }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-primary"
+              [disabled]="creatingBusy() || !newName.trim()"
+              (click)="submitCreate()"
+            >
+              {{ creatingBusy() ? t('common.loading') : t('common.create') }}
+            </button>
           </div>
-        </div>
+        </r-dialog>
       }
     </ng-container>
   `,

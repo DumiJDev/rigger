@@ -1,6 +1,8 @@
 import { ChangeDetectionStrategy, Component, input, model } from '@angular/core';
 import { Icon } from './icon';
 
+let nextInstanceId = 0;
+
 export interface KvPair {
   key: string;
   value: string;
@@ -20,14 +22,20 @@ export interface KvPair {
     <div class="space-y-2">
       @for (pair of pairs(); track $index) {
         <div class="flex gap-2">
+          <label class="sr-only" [attr.for]="id() + '-key-' + $index">{{ keyPlaceholder() }}</label>
           <input
+            [id]="id() + '-key-' + $index"
             class="input flex-1 font-mono text-xs"
             [placeholder]="keyPlaceholder()"
             [value]="pair.key"
             (input)="updateKey($index, $any($event.target).value)"
             [disabled]="disabled()"
           />
+          <label class="sr-only" [attr.for]="id() + '-value-' + $index">{{
+            valuePlaceholder()
+          }}</label>
           <input
+            [id]="id() + '-value-' + $index"
             class="input flex-1 font-mono text-xs"
             [type]="valueType()"
             [placeholder]="valuePlaceholder()"
@@ -54,6 +62,8 @@ export interface KvPair {
   `,
 })
 export class KvEditor {
+  /** Unique per instance so key/value `<label for>` ids never collide across two editors on one page. */
+  readonly id = input(`kv-editor-${nextInstanceId++}`);
   readonly pairs = model.required<KvPair[]>();
   readonly keyPlaceholder = input('key');
   readonly valuePlaceholder = input('value');

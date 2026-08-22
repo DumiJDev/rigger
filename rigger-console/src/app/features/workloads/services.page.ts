@@ -9,6 +9,7 @@ import { KvEditor, KvPair, kvPairsToMap } from '../../shared/kv-editor';
 import { ListToolbar } from '../../shared/list-toolbar';
 import { PageHeader } from '../../shared/page-header';
 import { DetailDrawer } from '../../shared/detail-drawer';
+import { Dialog } from '../../shared/dialog';
 import { RowAction, RowMenu } from '../../shared/row-menu';
 import { toYaml } from '../../shared/yaml';
 import { ResourceListPage } from './resource-page.base';
@@ -29,6 +30,7 @@ interface ServicePort {
     ListToolbar,
     RowMenu,
     DetailDrawer,
+    Dialog,
     KvEditor,
     FormsModule,
     Icon,
@@ -51,6 +53,29 @@ interface ServicePort {
         }
       </r-list-toolbar>
 
+      @if (hasSelection()) {
+        <div
+          class="mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"
+          style="border-color: var(--border-subtle); background-color: var(--surface-sunken)"
+        >
+          <span>{{ t('common.selectedCount', { count: selected().size }) }}</span>
+          <span class="flex-1"></span>
+          @if (canDelete()) {
+            <button
+              type="button"
+              class="btn btn-danger py-1"
+              [disabled]="bulkBusy()"
+              (click)="bulkConfirming.set(true)"
+            >
+              {{ t('common.deleteSelected') }}
+            </button>
+          }
+          <button type="button" class="btn btn-ghost py-1" (click)="clearSelection()">
+            {{ t('common.clearSelection') }}
+          </button>
+        </div>
+      }
+
       <r-data-state
         [loading]="loading()"
         [error]="error() ? t(error()!) : null"
@@ -62,6 +87,14 @@ interface ServicePort {
           <table class="data">
             <thead>
               <tr>
+                <th class="w-8">
+                  <input
+                    type="checkbox"
+                    [attr.aria-label]="t('common.selectAll')"
+                    [checked]="allVisibleSelected()"
+                    (change)="toggleSelectAll()"
+                  />
+                </th>
                 <th class="sortable" [attr.aria-sort]="ariaSort('name')" (click)="sortBy('name')">
                   {{ t('common.name') }}
                 </th>
@@ -80,6 +113,14 @@ interface ServicePort {
             <tbody>
               @for (item of visible(); track item.name) {
                 <tr class="clickable" (click)="openDetails(item)">
+                  <td (click)="$event.stopPropagation()">
+                    <input
+                      type="checkbox"
+                      [attr.aria-label]="t('common.selectRow', { name: item.name })"
+                      [checked]="isSelected(item.name)"
+                      (change)="toggleSelect(item.name, $any($event.target).checked)"
+                    />
+                  </td>
                   <td class="font-medium">{{ item.name }}</td>
                   <td class="muted">{{ type(item) }}</td>
                   <td class="tabular-nums">{{ ports(item) }}</td>
@@ -99,28 +140,42 @@ interface ServicePort {
       </r-data-state>
 
       @if (confirming(); as name) {
-        <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="confirming.set(null)">
-          <div class="surface w-full max-w-sm p-5" (click)="$event.stopPropagation()">
-            <p class="text-sm">{{ t('services.deleteConfirm', { name }) }}</p>
-            <div class="mt-5 flex justify-end gap-2">
-              <button type="button" class="btn btn-ghost" (click)="confirming.set(null)">
-                {{ t('common.cancel') }}
-              </button>
-              <button type="button" class="btn btn-danger" (click)="confirming.set(null); remove(name)">
-                {{ t('common.delete') }}
-              </button>
-            </div>
+        <r-dialog size="sm" ariaLabel="{{ t('services.deleteConfirm', { name }) }}" (closed)="confirming.set(null)">
+          <p class="text-sm">{{ t('services.deleteConfirm', { name }) }}</p>
+          <div class="mt-5 flex justify-end gap-2">
+            <button type="button" class="btn btn-ghost" (click)="confirming.set(null)">
+              {{ t('common.cancel') }}
+            </button>
+            <button type="button" class="btn btn-danger" (click)="confirming.set(null); remove(name)">
+              {{ t('common.delete') }}
+            </button>
           </div>
-        </div>
+        </r-dialog>
+      }
+      @if (bulkConfirming()) {
+        <r-dialog
+          size="sm"
+          ariaLabel="{{ t('common.deleteSelectedConfirm', { count: selected().size }) }}"
+          (closed)="bulkConfirming.set(false)"
+        >
+          <p class="text-sm">{{ t('common.deleteSelectedConfirm', { count: selected().size }) }}</p>
+          <div class="mt-5 flex justify-end gap-2">
+            <button type="button" class="btn btn-ghost" (click)="bulkConfirming.set(false)">
+              {{ t('common.cancel') }}
+            </button>
+            <button type="button" class="btn btn-danger" [disabled]="bulkBusy()" (click)="confirmBulkRemove()">
+              {{ t('common.delete') }}
+            </button>
+          </div>
+        </r-dialog>
       }
       @if (viewing(); as item) {
         <r-detail-drawer [resource]="item" (closed)="viewing.set(null)" />
       }
 
       @if (creating()) {
-        <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="closeCreate()">
-          <div class="surface w-full max-w-lg p-5" (click)="$event.stopPropagation()">
-            <h2 class="text-base font-semibold">{{ t('services.createTitle') }}</h2>
+        <r-dialog size="lg" labelledBy="svc-create-title" (closed)="closeCreate()">
+          <h2 id="svc-create-title" class="text-base font-semibold">{{ t('services.createTitle') }}</h2>
 
             <label class="mt-4 mb-1.5 block text-sm font-medium" for="svc-name">
               {{ t('common.name') }}
@@ -146,6 +201,7 @@ interface ServicePort {
                     min="1"
                     class="input w-24"
                     [placeholder]="t('services.port')"
+                    [attr.aria-label]="t('services.port')"
                     [(ngModel)]="row.port"
                     [disabled]="creatingBusy()"
                   />
@@ -154,10 +210,16 @@ interface ServicePort {
                     min="1"
                     class="input w-24"
                     [placeholder]="t('services.targetPort')"
+                    [attr.aria-label]="t('services.targetPort')"
                     [(ngModel)]="row.targetPort"
                     [disabled]="creatingBusy()"
                   />
-                  <select class="input w-28" [(ngModel)]="row.protocol" [disabled]="creatingBusy()">
+                  <select
+                    class="input w-28"
+                    [attr.aria-label]="t('services.protocol')"
+                    [(ngModel)]="row.protocol"
+                    [disabled]="creatingBusy()"
+                  >
                     <option value="TCP">TCP</option>
                     <option value="UDP">UDP</option>
                   </select>
@@ -241,8 +303,7 @@ interface ServicePort {
                 {{ creatingBusy() ? t('common.loading') : t('common.create') }}
               </button>
             </div>
-          </div>
-        </div>
+        </r-dialog>
       }
     </ng-container>
   `,
@@ -382,7 +443,7 @@ export class ServicesPage extends ResourceListPage {
   }
 
   type(item: ResourceResponse): string {
-    return this.specValue<string>(item, 'type') ?? 'CLUSTER_IP';
+    return this.specValue<string>(item, 'type') ?? 'ClusterIP';
   }
 
   ports(item: ResourceResponse): string {

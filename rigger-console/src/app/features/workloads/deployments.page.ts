@@ -8,6 +8,7 @@ import { KvEditor, KvPair, kvPairsToMap } from '../../shared/kv-editor';
 import { ListToolbar } from '../../shared/list-toolbar';
 import { PageHeader } from '../../shared/page-header';
 import { DetailDrawer } from '../../shared/detail-drawer';
+import { Dialog } from '../../shared/dialog';
 import { RowAction, RowMenu } from '../../shared/row-menu';
 import { toYaml } from '../../shared/yaml';
 import { ResourceListPage } from './resource-page.base';
@@ -23,6 +24,7 @@ import { ResourceListPage } from './resource-page.base';
     ListToolbar,
     RowMenu,
     DetailDrawer,
+    Dialog,
     KvEditor,
   ],
   templateUrl: './deployments.page.html',
@@ -36,6 +38,9 @@ export class DeploymentsPage extends ResourceListPage {
   readonly scaling = signal<ResourceResponse | null>(null);
   readonly confirming = signal<string | null>(null);
   scaleValue = 1;
+
+  readonly bulkScaling = signal(false);
+  bulkScaleValue = 1;
 
   readonly creating = signal(false);
   readonly creatingBusy = signal(false);
@@ -211,5 +216,32 @@ export class DeploymentsPage extends ResourceListPage {
   async confirmDelete(name: string): Promise<void> {
     this.confirming.set(null);
     await this.remove(name);
+  }
+
+  openBulkScale(): void {
+    this.bulkScaleValue = 1;
+    this.bulkScaling.set(true);
+  }
+
+  /** Sequential like `bulkRemove`, and for the same reason: `busyItem` stays meaningful mid-batch. */
+  async confirmBulkScale(): Promise<void> {
+    const replicas = Math.max(0, Math.floor(this.bulkScaleValue));
+    const names = [...this.selected()];
+    this.bulkScaling.set(false);
+    this.bulkBusy.set(true);
+    for (const name of names) {
+      this.busyItem.set(name);
+      try {
+        await firstValueFrom(this.api.scale(this.ns.current(), name, replicas));
+        this.items.update((list) =>
+          list.map((i) => (i.name === name ? { ...i, spec: { ...i.spec, replicas } } : i)),
+        );
+      } catch (e) {
+        const err = e as { status?: number };
+        this.error.set(err?.status === 403 ? 'errors.forbidden' : 'common.error');
+      }
+    }
+    this.busyItem.set(null);
+    this.bulkBusy.set(false);
   }
 }

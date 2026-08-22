@@ -1,4 +1,12 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  HostListener,
+  computed,
+  effect,
+  inject,
+  signal,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { TranslocoDirective } from '@jsverse/transloco';
 import { firstValueFrom } from 'rxjs';
@@ -38,6 +46,7 @@ export class PodsPage {
   readonly streaming = signal(false);
   readonly logError = signal<string | null>(null);
   readonly ended = signal(false);
+  readonly truncated = signal(false);
   filter = '';
   readonly filterSignal = signal('');
 
@@ -84,6 +93,7 @@ export class PodsPage {
     this.lines.set([]);
     this.logError.set(null);
     this.ended.set(false);
+    this.truncated.set(false);
     this.streaming.set(true);
 
     this.stop = this.logs.stream(
@@ -92,9 +102,11 @@ export class PodsPage {
       follow,
       (line) =>
         // Cap retained output: a followed stream is unbounded and would grow the DOM forever.
-        this.lines.update((current) =>
-          current.length >= MAX_LINES ? [...current.slice(1), line] : [...current, line],
-        ),
+        this.lines.update((current) => {
+          if (current.length < MAX_LINES) return [...current, line];
+          this.truncated.set(true);
+          return [...current.slice(1), line];
+        }),
       (message) => {
         this.logError.set(message);
         this.streaming.set(false);
@@ -116,11 +128,18 @@ export class PodsPage {
     this.pauseLogs();
     this.viewing.set(null);
     this.lines.set([]);
+    this.truncated.set(false);
     this.filter = '';
     this.filterSignal.set('');
   }
 
   onFilterChange(value: string): void {
     this.filterSignal.set(value);
+  }
+
+  /** Escape closes, matching every other overlay in the console. */
+  @HostListener('document:keydown.escape')
+  onEscape(): void {
+    if (this.viewing()) this.closeLogs();
   }
 }

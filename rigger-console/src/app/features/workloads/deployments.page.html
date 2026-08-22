@@ -15,6 +15,39 @@
     }
   </r-list-toolbar>
 
+  @if (hasSelection()) {
+    <div
+      class="mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"
+      style="border-color: var(--border-subtle); background-color: var(--surface-sunken)"
+    >
+      <span>{{ t('common.selectedCount', { count: selected().size }) }}</span>
+      <span class="flex-1"></span>
+      @if (auth.can('scale', 'Deployment')) {
+        <button
+          type="button"
+          class="btn btn-ghost py-1"
+          [disabled]="bulkBusy()"
+          (click)="openBulkScale()"
+        >
+          {{ t('deployments.scaleSelected') }}
+        </button>
+      }
+      @if (canDelete()) {
+        <button
+          type="button"
+          class="btn btn-danger py-1"
+          [disabled]="bulkBusy()"
+          (click)="bulkConfirming.set(true)"
+        >
+          {{ t('common.deleteSelected') }}
+        </button>
+      }
+      <button type="button" class="btn btn-ghost py-1" (click)="clearSelection()">
+        {{ t('common.clearSelection') }}
+      </button>
+    </div>
+  }
+
   <r-data-state
     [loading]="loading()"
     [error]="error() ? t(error()!) : null"
@@ -26,6 +59,14 @@
       <table class="data">
         <thead>
           <tr>
+            <th class="w-8">
+              <input
+                type="checkbox"
+                [attr.aria-label]="t('common.selectAll')"
+                [checked]="allVisibleSelected()"
+                (change)="toggleSelectAll()"
+              />
+            </th>
             <th class="sortable" [attr.aria-sort]="ariaSort('name')" (click)="sortBy('name')">
               {{ t('common.name') }}
             </th>
@@ -47,6 +88,14 @@
         <tbody>
           @for (item of visible(); track item.name) {
             <tr class="clickable" (click)="openDetails(item)">
+              <td (click)="$event.stopPropagation()">
+                <input
+                  type="checkbox"
+                  [attr.aria-label]="t('common.selectRow', { name: item.name })"
+                  [checked]="isSelected(item.name)"
+                  (change)="toggleSelect(item.name, $any($event.target).checked)"
+                />
+              </td>
               <td class="font-medium">{{ item.name }}</td>
               <td class="muted">{{ image(item) }}</td>
               <td class="num">{{ replicas(item) }}</td>
@@ -74,64 +123,106 @@
 
   <!-- Scale dialog -->
   @if (scaling(); as item) {
-    <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="scaling.set(null)">
-      <div class="surface w-full max-w-sm p-5" (click)="$event.stopPropagation()">
-        <h2 class="text-base font-semibold">
-          {{ t('deployments.scaleTitle', { name: item.name }) }}
-        </h2>
-        <label class="mt-4 block text-sm font-medium" for="replicas">
-          {{ t('deployments.scaleLabel') }}
-        </label>
-        <input
-          id="replicas"
-          type="number"
-          min="0"
-          class="input mt-1.5"
-          [(ngModel)]="scaleValue"
+    <r-dialog size="sm" labelledBy="scale-title" (closed)="scaling.set(null)">
+      <h2 id="scale-title" class="text-base font-semibold">
+        {{ t('deployments.scaleTitle', { name: item.name }) }}
+      </h2>
+      <label class="mt-4 block text-sm font-medium" for="replicas">
+        {{ t('deployments.scaleLabel') }}
+      </label>
+      <input
+        id="replicas"
+        type="number"
+        min="0"
+        class="input mt-1.5"
+        [(ngModel)]="scaleValue"
+        [disabled]="busyItem() === item.name"
+      />
+      <div class="mt-5 flex justify-end gap-2">
+        <button type="button" class="btn btn-ghost" (click)="scaling.set(null)">
+          {{ t('common.cancel') }}
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary"
           [disabled]="busyItem() === item.name"
-        />
-        <div class="mt-5 flex justify-end gap-2">
-          <button type="button" class="btn btn-ghost" (click)="scaling.set(null)">
-            {{ t('common.cancel') }}
-          </button>
-          <button
-            type="button"
-            class="btn btn-primary"
-            [disabled]="busyItem() === item.name"
-            (click)="applyScale()"
-          >
-            {{ t('common.confirm') }}
-          </button>
-        </div>
+          (click)="applyScale()"
+        >
+          {{ t('common.confirm') }}
+        </button>
       </div>
-    </div>
+    </r-dialog>
   }
 
   <!-- Delete confirmation -->
   @if (confirming(); as name) {
-    <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="confirming.set(null)">
-      <div class="surface w-full max-w-sm p-5" (click)="$event.stopPropagation()">
-        <p class="text-sm">{{ t('deployments.deleteConfirm', { name }) }}</p>
-        <div class="mt-5 flex justify-end gap-2">
-          <button type="button" class="btn btn-ghost" (click)="confirming.set(null)">
-            {{ t('common.cancel') }}
-          </button>
-          <button type="button" class="btn btn-danger" (click)="confirmDelete(name)">
-            {{ t('common.delete') }}
-          </button>
-        </div>
+    <r-dialog size="sm" ariaLabel="{{ t('deployments.deleteConfirm', { name }) }}" (closed)="confirming.set(null)">
+      <p class="text-sm">{{ t('deployments.deleteConfirm', { name }) }}</p>
+      <div class="mt-5 flex justify-end gap-2">
+        <button type="button" class="btn btn-ghost" (click)="confirming.set(null)">
+          {{ t('common.cancel') }}
+        </button>
+        <button type="button" class="btn btn-danger" (click)="confirmDelete(name)">
+          {{ t('common.delete') }}
+        </button>
       </div>
-    </div>
+    </r-dialog>
   }
+  <!-- Bulk delete confirmation -->
+  @if (bulkConfirming()) {
+    <r-dialog
+      size="sm"
+      ariaLabel="{{ t('common.deleteSelectedConfirm', { count: selected().size }) }}"
+      (closed)="bulkConfirming.set(false)"
+    >
+      <p class="text-sm">{{ t('common.deleteSelectedConfirm', { count: selected().size }) }}</p>
+      <div class="mt-5 flex justify-end gap-2">
+        <button type="button" class="btn btn-ghost" (click)="bulkConfirming.set(false)">
+          {{ t('common.cancel') }}
+        </button>
+        <button type="button" class="btn btn-danger" [disabled]="bulkBusy()" (click)="confirmBulkRemove()">
+          {{ t('common.delete') }}
+        </button>
+      </div>
+    </r-dialog>
+  }
+
+  <!-- Bulk scale dialog -->
+  @if (bulkScaling()) {
+    <r-dialog size="sm" labelledBy="bulk-scale-title" (closed)="bulkScaling.set(false)">
+      <h2 id="bulk-scale-title" class="text-base font-semibold">
+        {{ t('deployments.scaleSelectedTitle', { count: selected().size }) }}
+      </h2>
+      <label class="mt-4 block text-sm font-medium" for="bulk-replicas">
+        {{ t('deployments.scaleLabel') }}
+      </label>
+      <input
+        id="bulk-replicas"
+        type="number"
+        min="0"
+        class="input mt-1.5"
+        [(ngModel)]="bulkScaleValue"
+        [disabled]="bulkBusy()"
+      />
+      <div class="mt-5 flex justify-end gap-2">
+        <button type="button" class="btn btn-ghost" (click)="bulkScaling.set(false)">
+          {{ t('common.cancel') }}
+        </button>
+        <button type="button" class="btn btn-primary" [disabled]="bulkBusy()" (click)="confirmBulkScale()">
+          {{ t('common.confirm') }}
+        </button>
+      </div>
+    </r-dialog>
+  }
+
   @if (viewing(); as item) {
     <r-detail-drawer [resource]="item" (closed)="viewing.set(null)" />
   }
 
   <!-- Create dialog -->
   @if (creating()) {
-    <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="closeCreate()">
-      <div class="surface w-full max-w-lg p-5" (click)="$event.stopPropagation()">
-        <h2 class="text-base font-semibold">{{ t('deployments.createTitle') }}</h2>
+    <r-dialog size="lg" labelledBy="dep-create-title" (closed)="closeCreate()">
+      <h2 id="dep-create-title" class="text-base font-semibold">{{ t('deployments.createTitle') }}</h2>
 
         <label class="mt-4 mb-1.5 block text-sm font-medium" for="dep-name">
           {{ t('common.name') }}
@@ -244,7 +335,6 @@
             {{ creatingBusy() ? t('common.loading') : t('common.create') }}
           </button>
         </div>
-      </div>
-    </div>
+    </r-dialog>
   }
 </ng-container>

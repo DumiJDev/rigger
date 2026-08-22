@@ -7,6 +7,7 @@ import { RefreshService } from '../../core/refresh.service';
 import { AuthService } from '../../core/auth.service';
 import { UserResponse } from '../../core/api.models';
 import { DataState } from '../../shared/data-state';
+import { Dialog } from '../../shared/dialog';
 import { PageHeader } from '../../shared/page-header';
 
 const ROLES = ['CLUSTER_ADMIN', 'DEPLOYER', 'VIEWER', 'GITOPS_AGENT'] as const;
@@ -14,7 +15,7 @@ const ROLES = ['CLUSTER_ADMIN', 'DEPLOYER', 'VIEWER', 'GITOPS_AGENT'] as const;
 @Component({
   selector: 'r-users',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoDirective, PageHeader, DataState, FormsModule],
+  imports: [TranslocoDirective, PageHeader, DataState, Dialog, FormsModule],
   templateUrl: './users.page.html',
 })
 export class UsersPage {

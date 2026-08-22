@@ -4,6 +4,7 @@ import { TranslocoDirective, TranslocoService } from '@jsverse/transloco';
 import { firstValueFrom } from 'rxjs';
 import { ApiService } from '../../core/api.service';
 import { ClusterMetrics } from '../../core/api.models';
+import { Dialog } from '../../shared/dialog';
 import { PageHeader } from '../../shared/page-header';
 
 /**
@@ -14,7 +15,7 @@ import { PageHeader } from '../../shared/page-header';
 @Component({
   selector: 'r-cluster',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoDirective, PageHeader, FormsModule],
+  imports: [TranslocoDirective, PageHeader, Dialog, FormsModule],
   template: `
     <ng-container *transloco="let t">
       <r-page-header [title]="t('cluster.title')" [subtitle]="t('cluster.subtitle')" />
@@ -94,21 +95,23 @@ import { PageHeader } from '../../shared/page-header';
       </div>
 
       @if (pending(); as op) {
-        <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="pending.set(null)">
-          <div class="surface w-full max-w-md p-5" (click)="$event.stopPropagation()">
-            <p class="text-sm">
-              {{ op === 'up' ? t('cluster.upHelp') : t('cluster.syncHelp') }}
-            </p>
-            <div class="mt-5 flex justify-end gap-2">
-              <button type="button" class="btn btn-ghost" (click)="pending.set(null)">
-                {{ t('common.cancel') }}
-              </button>
-              <button type="button" class="btn btn-primary" (click)="run(op)">
-                {{ t('common.confirm') }}
-              </button>
-            </div>
+        <r-dialog
+          size="md"
+          ariaLabel="{{ op === 'up' ? t('cluster.upHelp') : t('cluster.syncHelp') }}"
+          (closed)="pending.set(null)"
+        >
+          <p class="text-sm">
+            {{ op === 'up' ? t('cluster.upHelp') : t('cluster.syncHelp') }}
+          </p>
+          <div class="mt-5 flex justify-end gap-2">
+            <button type="button" class="btn btn-ghost" (click)="pending.set(null)">
+              {{ t('common.cancel') }}
+            </button>
+            <button type="button" class="btn btn-primary" (click)="run(op)">
+              {{ t('common.confirm') }}
+            </button>
           </div>
-        </div>
+        </r-dialog>
       }
     </ng-container>
   `,

@@ -65,69 +65,65 @@
   </r-data-state>
 
   @if (creating()) {
-    <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="creating.set(false)">
-      <div class="surface w-full max-w-md p-5" (click)="$event.stopPropagation()">
-        <h2 class="text-base font-semibold">{{ t('users.create') }}</h2>
-        <div class="mt-4 space-y-4">
-          <div>
-            <label class="mb-1.5 block text-sm font-medium" for="u-name">
-              {{ t('users.username') }}
-            </label>
-            <input id="u-name" class="input" [(ngModel)]="form.username" [disabled]="busy()" />
-          </div>
-          <div>
-            <label class="mb-1.5 block text-sm font-medium" for="u-pass">
-              {{ t('users.password') }}
-            </label>
-            <input
-              id="u-pass"
-              type="password"
-              class="input"
-              autocomplete="new-password"
-              [(ngModel)]="form.password"
-              [disabled]="busy()"
-            />
-          </div>
-          <div>
-            <label class="mb-1.5 block text-sm font-medium" for="u-role">{{ t('users.role') }}</label>
-            <select id="u-role" class="input" [(ngModel)]="form.role" [disabled]="busy()">
-              @for (r of roles; track r) {
-                <option [value]="r">{{ r }}</option>
-              }
-            </select>
-          </div>
-          <div>
-            <label class="mb-1.5 block text-sm font-medium" for="u-ns">
-              {{ t('users.namespaceScope') }}
-            </label>
-            <input id="u-ns" class="input" [(ngModel)]="form.namespace" [disabled]="busy()" />
-          </div>
+    <r-dialog size="md" labelledBy="user-create-title" (closed)="creating.set(false)">
+      <h2 id="user-create-title" class="text-base font-semibold">{{ t('users.create') }}</h2>
+      <div class="mt-4 space-y-4">
+        <div>
+          <label class="mb-1.5 block text-sm font-medium" for="u-name">
+            {{ t('users.username') }}
+          </label>
+          <input id="u-name" class="input" [(ngModel)]="form.username" [disabled]="busy()" />
         </div>
-        <div class="mt-5 flex justify-end gap-2">
-          <button type="button" class="btn btn-ghost" (click)="creating.set(false)">
-            {{ t('common.cancel') }}
-          </button>
-          <button type="button" class="btn btn-primary" [disabled]="busy()" (click)="create()">
-            {{ t('common.save') }}
-          </button>
+        <div>
+          <label class="mb-1.5 block text-sm font-medium" for="u-pass">
+            {{ t('users.password') }}
+          </label>
+          <input
+            id="u-pass"
+            type="password"
+            class="input"
+            autocomplete="new-password"
+            [(ngModel)]="form.password"
+            [disabled]="busy()"
+          />
+        </div>
+        <div>
+          <label class="mb-1.5 block text-sm font-medium" for="u-role">{{ t('users.role') }}</label>
+          <select id="u-role" class="input" [(ngModel)]="form.role" [disabled]="busy()">
+            @for (r of roles; track r) {
+              <option [value]="r">{{ r }}</option>
+            }
+          </select>
+        </div>
+        <div>
+          <label class="mb-1.5 block text-sm font-medium" for="u-ns">
+            {{ t('users.namespaceScope') }}
+          </label>
+          <input id="u-ns" class="input" [(ngModel)]="form.namespace" [disabled]="busy()" />
         </div>
       </div>
-    </div>
+      <div class="mt-5 flex justify-end gap-2">
+        <button type="button" class="btn btn-ghost" (click)="creating.set(false)">
+          {{ t('common.cancel') }}
+        </button>
+        <button type="button" class="btn btn-primary" [disabled]="busy()" (click)="create()">
+          {{ t('common.save') }}
+        </button>
+      </div>
+    </r-dialog>
   }
 
   @if (confirming(); as name) {
-    <div class="fixed inset-0 z-30 grid place-items-center bg-black/40 px-4" (click)="confirming.set(null)">
-      <div class="surface w-full max-w-sm p-5" (click)="$event.stopPropagation()">
-        <p class="text-sm">{{ t('users.deleteConfirm', { name }) }}</p>
-        <div class="mt-5 flex justify-end gap-2">
-          <button type="button" class="btn btn-ghost" (click)="confirming.set(null)">
-            {{ t('common.cancel') }}
-          </button>
-          <button type="button" class="btn btn-danger" (click)="remove(name)">
-            {{ t('common.delete') }}
-          </button>
-        </div>
+    <r-dialog size="sm" ariaLabel="{{ t('users.deleteConfirm', { name }) }}" (closed)="confirming.set(null)">
+      <p class="text-sm">{{ t('users.deleteConfirm', { name }) }}</p>
+      <div class="mt-5 flex justify-end gap-2">
+        <button type="button" class="btn btn-ghost" (click)="confirming.set(null)">
+          {{ t('common.cancel') }}
+        </button>
+        <button type="button" class="btn btn-danger" (click)="remove(name)">
+          {{ t('common.delete') }}
+        </button>
       </div>
-    </div>
+    </r-dialog>
   }
 </ng-container>

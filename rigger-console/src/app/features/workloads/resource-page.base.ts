@@ -29,6 +29,12 @@ export abstract class ResourceListPage {
   readonly items = signal<ResourceResponse[]>([]);
   readonly busyItem = signal<string | null>(null);
 
+  /** Rows checked for a bulk action. A `Set` keyed by name, not index — indexes shift on sort/filter. */
+  readonly selected = signal<Set<string>>(new Set());
+  /** True for the whole span of a bulk operation, disabling the toolbar while it runs. */
+  readonly bulkBusy = signal(false);
+  readonly bulkConfirming = signal(false);
+
   readonly query = signal('');
   readonly sortKey = signal('name');
   readonly sortDir = signal<SortDir>('asc');
@@ -79,6 +85,36 @@ export abstract class ResourceListPage {
 
   /** True when a filter is hiding rows, so the empty state can say so instead of "no resources". */
   readonly filteredOut = computed(() => this.items().length > 0 && this.visible().length === 0);
+
+  /** Header checkbox state: checked only when every currently-visible row is selected. */
+  readonly allVisibleSelected = computed(() => {
+    const rows = this.visible();
+    return rows.length > 0 && rows.every((i) => this.selected().has(i.name));
+  });
+
+  readonly hasSelection = computed(() => this.selected().size > 0);
+
+  isSelected(name: string): boolean {
+    return this.selected().has(name);
+  }
+
+  toggleSelect(name: string, checked: boolean): void {
+    this.selected.update((set) => {
+      const next = new Set(set);
+      if (checked) next.add(name);
+      else next.delete(name);
+      return next;
+    });
+  }
+
+  /** Toggles between "all visible rows" and "none" — a filtered-out row is never silently included. */
+  toggleSelectAll(): void {
+    this.selected.set(this.allVisibleSelected() ? new Set() : new Set(this.visible().map((i) => i.name)));
+  }
+
+  clearSelection(): void {
+    this.selected.set(new Set());
+  }
 
   /**
    * Clicking the active column flips direction; a different column sorts it ascending. Resetting to
@@ -141,7 +177,10 @@ export abstract class ResourceListPage {
     this.loading.set(true);
     this.error.set(null);
     try {
-      this.items.set(await firstValueFrom(this.fetch(namespace)));
+      const items = await firstValueFrom(this.fetch(namespace));
+      this.items.set(items);
+      // Drop selections for rows that no longer exist — the common case is switching namespace.
+      this.selected.update((set) => new Set([...set].filter((n) => items.some((i) => i.name === n))));
     } catch (e) {
       const err = e as { status?: number };
       this.error.set(err?.status === 403 ? 'errors.forbidden' : 'common.error');
@@ -161,6 +200,12 @@ export abstract class ResourceListPage {
       // Drop it locally rather than refetching: reconciliation is asynchronous, so an immediate
       // refetch can still return the row and make the delete look like it failed.
       this.items.update((list) => list.filter((i) => i.name !== name));
+      this.selected.update((set) => {
+        if (!set.has(name)) return set;
+        const next = new Set(set);
+        next.delete(name);
+        return next;
+      });
       // A drawer left open over a resource that no longer exists shows a spec nothing can act on.
       if (this.viewing()?.name === name) this.viewing.set(null);
     } catch (e) {
@@ -169,6 +214,24 @@ export abstract class ResourceListPage {
     } finally {
       this.busyItem.set(null);
     }
+  }
+
+  /**
+   * Deletes every selected row, one at a time — sequential rather than `Promise.all` so `busyItem`
+   * (a single-row signal by design elsewhere in the console) still means something to look at while
+   * a batch runs, instead of flickering between rows.
+   */
+  async bulkRemove(): Promise<void> {
+    this.bulkBusy.set(true);
+    for (const name of [...this.selected()]) {
+      await this.remove(name);
+    }
+    this.bulkBusy.set(false);
+  }
+
+  async confirmBulkRemove(): Promise<void> {
+    this.bulkConfirming.set(false);
+    await this.bulkRemove();
   }
 
   /** Reads a field out of the untyped spec blob the API returns. */
